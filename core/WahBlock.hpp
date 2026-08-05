@@ -39,10 +39,15 @@ public:
 private:
     void updateFilter()
     {
+        // Sweep the bandpass center frequency between ~400Hz (heel down)
+        // and ~2000Hz (toe down) - the classic wah range.
         const float minFreq = 400.0f;
         const float maxFreq = 2000.0f;
         const float freq = minFreq + pedalPosition * (maxFreq - minFreq);
 
+        // We reuse our Biquad as a Peak filter with a high gain boost and
+        // narrow Q, which behaves like a resonant bandpass sweep - the
+        // same trick most simple wah implementations use.
         filter.setParams(Biquad::Type::Peak, freq, 15.0f, resonanceQ);
     }
 

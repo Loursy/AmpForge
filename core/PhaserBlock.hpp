@@ -15,6 +15,7 @@
 
 namespace ampforge {
 
+// A single first-order allpass stage with a controllable "break frequency".
 class PhaserAllpassStage
 {
 public:
@@ -22,6 +23,8 @@ public:
 
     void setFrequency(float freq)
     {
+        // Standard first-order allpass coefficient derived from the
+        // desired break frequency.
         const float tan_ = std::tan(static_cast<float>(M_PI) * freq / static_cast<float>(sampleRate));
         coeff = (tan_ - 1.0f) / (tan_ + 1.0f);
     }
@@ -62,8 +65,10 @@ public:
         lfoPhase += rateHz / static_cast<float>(sampleRate);
         if (lfoPhase >= 1.0f)
             lfoPhase -= 1.0f;
-        const float lfo = 0.5f + 0.5f * std::sin(2.0f * static_cast<float>(M_PI) * lfoPhase);
+        const float lfo = 0.5f + 0.5f * std::sin(2.0f * static_cast<float>(M_PI) * lfoPhase); // 0..1
 
+        // Sweep the allpass break frequency between ~200Hz and up to
+        // ~2000Hz, scaled by depth - lower depth means a narrower, subtler sweep.
         const float minFreq = 200.0f;
         const float maxFreq = 200.0f + depth * 1800.0f;
         const float freq = minFreq + lfo * (maxFreq - minFreq);

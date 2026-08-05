@@ -65,7 +65,7 @@ private:
     float envelope = 0.0f;
 
     float gateGain = 1.0f;
-    static constexpr float gateSmoothingCoeff = 0.01f;
+    static constexpr float gateSmoothingCoeff = 0.01f; // fixed smoothing for the gain itself
 };
 
 } // namespace ampforge

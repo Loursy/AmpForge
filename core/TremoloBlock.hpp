@@ -5,7 +5,8 @@
 
 /*
  * TremoloBlock - rhythmically raises and lowers the volume using a
- * slow LFO. This is the classic "pulsing" surf/indie guitar sound.
+ * slow LFO (low-frequency oscillator). This is the classic "pulsing"
+ * surf/indie guitar sound.
  */
 
 namespace ampforge {
@@ -30,8 +31,9 @@ public:
         if (lfoPhase >= 1.0f)
             lfoPhase -= 1.0f;
 
-        const float lfo = 0.5f + 0.5f * std::sin(2.0f * static_cast<float>(M_PI) * lfoPhase);
+        const float lfo = 0.5f + 0.5f * std::sin(2.0f * static_cast<float>(M_PI) * lfoPhase); // 0..1
 
+        // depth=0 -> gain always 1.0 (no effect). depth=1 -> gain swings all the way down to 0.
         const float gain = 1.0f - depth * (1.0f - lfo);
 
         return input * gain;

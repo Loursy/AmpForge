@@ -13,13 +13,17 @@
 #define DISTRHO_PLUGIN_BRAND_ID  Ampf
 #define DISTRHO_PLUGIN_UNIQUE_ID Main
 
-// No UI yet - we're validating that the chain (Screamer -> Amp) works
-// correctly and sounds right before we build the reorderable GUI.
-#define DISTRHO_PLUGIN_HAS_UI        0
+// GUI is now enabled - NanoVG gives us vector-style drawing (rounded
+// rects, gradients, smooth shapes) which is what we want for a modern,
+// fluid pedalboard look, instead of raw pixel-level OpenGL calls.
+#define DISTRHO_PLUGIN_HAS_UI        1
 #define DISTRHO_PLUGIN_IS_RT_SAFE    1
 #define DISTRHO_PLUGIN_NUM_INPUTS    1
 #define DISTRHO_PLUGIN_NUM_OUTPUTS   1
-#define DISTRHO_PLUGIN_WANT_PROGRAMS 0
+#define DISTRHO_PLUGIN_WANT_PROGRAMS 1
 #define DISTRHO_PLUGIN_WANT_STATE    0
+#define DISTRHO_UI_FILE_BROWSER      0
+#define DISTRHO_UI_USER_RESIZABLE    1
+#define DISTRHO_UI_USE_NANOVG        1
 
 #endif // DISTRHO_PLUGIN_INFO_H_INCLUDED

@@ -1,6 +1,8 @@
 dpf_add_plugin(ampforge_main
   TARGETS jack lv2 vst3
   FILES_DSP
-    ChainPlugin.cpp)
+    ChainPlugin.cpp
+  FILES_UI
+    ChainUI.cpp)
 
 target_include_directories(ampforge_main PUBLIC "." "../../core")

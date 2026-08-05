@@ -40,6 +40,13 @@ public:
 
     float process(float input)
     {
+        // Safety check: if setDelaySamples() hasn't been called yet (buffer
+        // still empty), just pass the signal through instead of indexing
+        // into an empty vector - this can happen if the host processes
+        // audio before it reports the sample rate.
+        if (buffer.empty())
+            return input;
+
         const float output = buffer[index];
 
         // One-pole lowpass in the feedback path - this is what makes
@@ -73,6 +80,10 @@ public:
 
     float process(float input)
     {
+        // Same safety check as CombFilter - avoid indexing an empty buffer.
+        if (buffer.empty())
+            return input;
+
         const float bufOut = buffer[index];
         const float output = -input + bufOut;
         buffer[index] = input + bufOut * feedback;
