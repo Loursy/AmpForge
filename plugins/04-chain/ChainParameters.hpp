@@ -86,6 +86,21 @@ enum Parameters
     kParamReverbDamping,
     kParamReverbMix,
 
+    // Bypass switches - separate from *On* (which controls whether a
+    // pedal is on the board at all). Bypass lets a pedal stay visible
+    // in the rack while its processing is temporarily switched off,
+    // like a real pedal's footswitch - added at the end of the enum so
+    // every existing parameter index above stays unchanged.
+    kParamGateBypass,
+    kParamCompBypass,
+    kParamWahBypass,
+    kParamScreamerBypass,
+    kParamChorusBypass,
+    kParamPhaserBypass,
+    kParamTremoloBypass,
+    kParamDelayBypass,
+    kParamReverbBypass,
+
     kParamCount
 };
 

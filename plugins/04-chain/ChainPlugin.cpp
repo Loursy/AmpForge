@@ -16,6 +16,7 @@
 
 #include "DistrhoPlugin.hpp"
 #include "ChainParameters.hpp"
+#include "ChainPresets.hpp"
 #include "ScreamerBlock.hpp"
 #include "AmpBlock.hpp"
 #include "DelayBlock.hpp"
@@ -31,141 +32,6 @@
 
 START_NAMESPACE_DISTRHO
 
-// --- Factory presets ---
-//
-// Each preset is just a full snapshot of every parameter's value, in
-// the same order as the Parameters enum above. loadProgram() applies
-// this snapshot by calling setParameterValue() for every entry, which
-// keeps the chain's internal state and the EffectChain enabled/position
-// flags perfectly in sync - the same code path a host uses when it
-// moves a knob.
-//
-// Chain order (the *Position values) is kept at the default pedalboard
-// layout for every preset here - only which blocks are on/off and their
-// tone-shaping parameters differ between presets.
-static constexpr uint32_t kProgramCount = 6;
-
-struct PresetDefinition
-{
-    const char* name;
-    float values[kParamCount];
-};
-
-// clang-format off
-static const PresetDefinition kPresets[kProgramCount] =
-{
-    // "Fender Clean" - light compression for sustain, a scooped-mid EQ,
-    // a touch of vibrato (tremolo) and a subtle spring-like reverb -
-    // the classic clean American amp sound.
-    {
-        "Fender Clean",
-        {
-            /* Gate      on,pos,thr,atk,rel      */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp      on,pos,thr,ratio,atk,rel,makeup */ 1.0f, 1.0f, -20.0f, 3.0f, 5.0f, 80.0f, 2.0f,
-            /* Wah       on,pos,pedal,q  */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer  on,pos,drive,tone,level */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp       pos,drive,bass,mid,treble,vol */ 4.0f, 3.0f, 2.0f, -3.0f, 4.0f, 0.0f,
-            /* Chorus    on,pos,rate,depth,mix */ 0.0f, 5.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser    on,pos,rate,depth,mix */ 0.0f, 6.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo   on,pos,rate,depth */ 1.0f, 7.0f, 4.0f, 0.3f,
-            /* Delay     on,pos,time,fb,mix */ 0.0f, 8.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb    on,pos,room,damp,mix */ 1.0f, 9.0f, 0.3f, 0.6f, 0.2f,
-        }
-    },
-
-    // "Marshall Rock" - Screamer pushing a cranked British-voiced amp,
-    // classic mid-forward rock rhythm/lead tone with a touch of room reverb.
-    {
-        "Marshall Rock",
-        {
-            /* Gate      */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp      */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
-            /* Wah       */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer  */ 1.0f, 3.0f, 6.0f, 0.6f, 0.0f,
-            /* Amp       */ 4.0f, 18.0f, 3.0f, 4.0f, 2.0f, 0.0f,
-            /* Chorus    */ 0.0f, 5.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser    */ 0.0f, 6.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo   */ 0.0f, 7.0f, 5.0f, 0.5f,
-            /* Delay     */ 0.0f, 8.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb    */ 1.0f, 9.0f, 0.4f, 0.5f, 0.15f,
-        }
-    },
-
-    // "Shredder Lead" - high gain solo tone: noise gate to keep it tight,
-    // hot Screamer into a saturated amp, boosted output level, and a
-    // slapback-ish delay + reverb tail for a solo that sits in the mix.
-    {
-        "Shredder Lead",
-        {
-            /* Gate      */ 1.0f, 0.0f, -45.0f, 2.0f, 100.0f,
-            /* Comp      */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
-            /* Wah       */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer  */ 1.0f, 3.0f, 12.0f, 0.7f, 3.0f,
-            /* Amp       */ 4.0f, 30.0f, 2.0f, 6.0f, 3.0f, 3.0f,
-            /* Chorus    */ 0.0f, 5.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser    */ 0.0f, 6.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo   */ 0.0f, 7.0f, 5.0f, 0.5f,
-            /* Delay     */ 1.0f, 8.0f, 350.0f, 0.25f, 0.2f,
-            /* Reverb    */ 1.0f, 9.0f, 0.6f, 0.4f, 0.25f,
-        }
-    },
-
-    // "Metal Rhythm" - tight noise gate, dark/scooped tone, maximum
-    // saturation, no time-based effects (keeps palm-muted chugs tight).
-    {
-        "Metal Rhythm",
-        {
-            /* Gate      */ 1.0f, 0.0f, -40.0f, 1.0f, 80.0f,
-            /* Comp      */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
-            /* Wah       */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer  */ 1.0f, 3.0f, 8.0f, 0.4f, 0.0f,
-            /* Amp       */ 4.0f, 34.0f, 5.0f, -2.0f, 1.0f, 0.0f,
-            /* Chorus    */ 0.0f, 5.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser    */ 0.0f, 6.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo   */ 0.0f, 7.0f, 5.0f, 0.5f,
-            /* Delay     */ 0.0f, 8.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb    */ 0.0f, 9.0f, 0.5f, 0.5f, 0.3f,
-        }
-    },
-
-    // "Ambient Shoegaze" - clean-ish amp, compressor for even sustain,
-    // chorus + phaser stacked for a wide, swirling texture, long delay
-    // and a big, dark reverb tail.
-    {
-        "Ambient Shoegaze",
-        {
-            /* Gate      */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp      */ 1.0f, 1.0f, -24.0f, 3.0f, 15.0f, 200.0f, 2.0f,
-            /* Wah       */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer  */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp       */ 4.0f, 5.0f, 1.0f, 0.0f, 2.0f, 0.0f,
-            /* Chorus    */ 1.0f, 5.0f, 0.4f, 8.0f, 0.6f,
-            /* Phaser    */ 1.0f, 6.0f, 0.2f, 0.5f, 0.3f,
-            /* Tremolo   */ 0.0f, 7.0f, 5.0f, 0.5f,
-            /* Delay     */ 1.0f, 8.0f, 500.0f, 0.45f, 0.35f,
-            /* Reverb    */ 1.0f, 9.0f, 0.85f, 0.3f, 0.5f,
-        }
-    },
-
-    // "Funk Clean" - snappy compression for percussive clean playing,
-    // Wah enabled (rock the "Wah Pedal" parameter while playing), bright
-    // clean amp tone, subtle room reverb only.
-    {
-        "Funk Clean",
-        {
-            /* Gate      */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp      */ 1.0f, 1.0f, -22.0f, 5.0f, 3.0f, 60.0f, 4.0f,
-            /* Wah       */ 1.0f, 2.0f, 0.5f, 4.0f,
-            /* Screamer  */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp       */ 4.0f, 2.0f, 0.0f, 1.0f, 3.0f, 0.0f,
-            /* Chorus    */ 0.0f, 5.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser    */ 0.0f, 6.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo   */ 0.0f, 7.0f, 5.0f, 0.5f,
-            /* Delay     */ 0.0f, 8.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb    */ 1.0f, 9.0f, 0.25f, 0.6f, 0.15f,
-        }
-    },
-};
 // clang-format on
 
 
@@ -522,6 +388,53 @@ protected:
             parameter.name = "Reverb Mix"; parameter.symbol = "reverb_mix";
             parameter.ranges.def = 0.3f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
             break;
+
+        // --- Bypass switches ---
+        case kParamGateBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Gate Bypass"; parameter.symbol = "gate_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamCompBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Compressor Bypass"; parameter.symbol = "comp_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamWahBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Wah Bypass"; parameter.symbol = "wah_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamScreamerBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Screamer Bypass"; parameter.symbol = "screamer_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamChorusBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Chorus Bypass"; parameter.symbol = "chorus_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamPhaserBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Phaser Bypass"; parameter.symbol = "phaser_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamTremoloBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Tremolo Bypass"; parameter.symbol = "tremolo_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamDelayBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Delay Bypass"; parameter.symbol = "delay_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamReverbBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Reverb Bypass"; parameter.symbol = "reverb_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
         }
     }
 
@@ -590,6 +503,16 @@ protected:
         case kParamReverbDamping:    return reverbDamping;
         case kParamReverbMix:        return reverbMix;
 
+        case kParamGateBypass:        return gateBypass ? 1.0f : 0.0f;
+        case kParamCompBypass:        return compBypass ? 1.0f : 0.0f;
+        case kParamWahBypass:         return wahBypass ? 1.0f : 0.0f;
+        case kParamScreamerBypass:    return screamerBypass ? 1.0f : 0.0f;
+        case kParamChorusBypass:      return chorusBypass ? 1.0f : 0.0f;
+        case kParamPhaserBypass:      return phaserBypass ? 1.0f : 0.0f;
+        case kParamTremoloBypass:     return tremoloBypass ? 1.0f : 0.0f;
+        case kParamDelayBypass:       return delayBypass ? 1.0f : 0.0f;
+        case kParamReverbBypass:      return reverbBypass ? 1.0f : 0.0f;
+
         default: return 0.0f;
         }
     }
@@ -599,7 +522,7 @@ protected:
         switch (index)
         {
         case kParamGateOn:
-            gateOn = value > 0.5f; chain.setEnabled(&gateBlock, gateOn); break;
+            gateOn = value > 0.5f; chain.setEnabled(&gateBlock, gateOn && !gateBypass); break;
         case kParamGatePosition:
             gatePosition = value; chain.setPosition(&gateBlock, static_cast<int>(std::round(value))); break;
         case kParamGateThreshold:
@@ -610,7 +533,7 @@ protected:
             gateRelease = value; gateBlock.setReleaseMs(value); break;
 
         case kParamCompOn:
-            compOn = value > 0.5f; chain.setEnabled(&compBlock, compOn); break;
+            compOn = value > 0.5f; chain.setEnabled(&compBlock, compOn && !compBypass); break;
         case kParamCompPosition:
             compPosition = value; chain.setPosition(&compBlock, static_cast<int>(std::round(value))); break;
         case kParamCompThreshold:
@@ -625,7 +548,7 @@ protected:
             compMakeup = value; compBlock.setMakeupGainDB(value); break;
 
         case kParamWahOn:
-            wahOn = value > 0.5f; chain.setEnabled(&wahBlock, wahOn); break;
+            wahOn = value > 0.5f; chain.setEnabled(&wahBlock, wahOn && !wahBypass); break;
         case kParamWahPosition:
             wahPosition = value; chain.setPosition(&wahBlock, static_cast<int>(std::round(value))); break;
         case kParamWahPedal:
@@ -634,7 +557,7 @@ protected:
             wahQ = value; wahBlock.setQ(value); break;
 
         case kParamScreamerOn:
-            screamerOn = value > 0.5f; chain.setEnabled(&screamerBlock, screamerOn); break;
+            screamerOn = value > 0.5f; chain.setEnabled(&screamerBlock, screamerOn && !screamerBypass); break;
         case kParamScreamerPosition:
             screamerPosition = value; chain.setPosition(&screamerBlock, static_cast<int>(std::round(value))); break;
         case kParamScreamerDrive:
@@ -658,7 +581,7 @@ protected:
             ampVolume = value; ampBlock.setVolumeDB(value); break;
 
         case kParamChorusOn:
-            chorusOn = value > 0.5f; chain.setEnabled(&chorusBlock, chorusOn); break;
+            chorusOn = value > 0.5f; chain.setEnabled(&chorusBlock, chorusOn && !chorusBypass); break;
         case kParamChorusPosition:
             chorusPosition = value; chain.setPosition(&chorusBlock, static_cast<int>(std::round(value))); break;
         case kParamChorusRate:
@@ -669,7 +592,7 @@ protected:
             chorusMix = value; chorusBlock.setMix(value); break;
 
         case kParamPhaserOn:
-            phaserOn = value > 0.5f; chain.setEnabled(&phaserBlock, phaserOn); break;
+            phaserOn = value > 0.5f; chain.setEnabled(&phaserBlock, phaserOn && !phaserBypass); break;
         case kParamPhaserPosition:
             phaserPosition = value; chain.setPosition(&phaserBlock, static_cast<int>(std::round(value))); break;
         case kParamPhaserRate:
@@ -680,7 +603,7 @@ protected:
             phaserMix = value; phaserBlock.setMix(value); break;
 
         case kParamTremoloOn:
-            tremoloOn = value > 0.5f; chain.setEnabled(&tremoloBlock, tremoloOn); break;
+            tremoloOn = value > 0.5f; chain.setEnabled(&tremoloBlock, tremoloOn && !tremoloBypass); break;
         case kParamTremoloPosition:
             tremoloPosition = value; chain.setPosition(&tremoloBlock, static_cast<int>(std::round(value))); break;
         case kParamTremoloRate:
@@ -689,7 +612,7 @@ protected:
             tremoloDepth = value; tremoloBlock.setDepth(value); break;
 
         case kParamDelayOn:
-            delayOn = value > 0.5f; chain.setEnabled(&delayBlock, delayOn); break;
+            delayOn = value > 0.5f; chain.setEnabled(&delayBlock, delayOn && !delayBypass); break;
         case kParamDelayPosition:
             delayPosition = value; chain.setPosition(&delayBlock, static_cast<int>(std::round(value))); break;
         case kParamDelayTime:
@@ -700,7 +623,7 @@ protected:
             delayMix = value; delayBlock.setMix(value); break;
 
         case kParamReverbOn:
-            reverbOn = value > 0.5f; chain.setEnabled(&reverbBlock, reverbOn); break;
+            reverbOn = value > 0.5f; chain.setEnabled(&reverbBlock, reverbOn && !reverbBypass); break;
         case kParamReverbPosition:
             reverbPosition = value; chain.setPosition(&reverbBlock, static_cast<int>(std::round(value))); break;
         case kParamReverbRoomSize:
@@ -709,6 +632,25 @@ protected:
             reverbDamping = value; reverbBlock.setDamping(value); break;
         case kParamReverbMix:
             reverbMix = value; reverbBlock.setMix(value); break;
+
+        case kParamGateBypass:
+            gateBypass = value > 0.5f; chain.setEnabled(&gateBlock, gateOn && !gateBypass); break;
+        case kParamCompBypass:
+            compBypass = value > 0.5f; chain.setEnabled(&compBlock, compOn && !compBypass); break;
+        case kParamWahBypass:
+            wahBypass = value > 0.5f; chain.setEnabled(&wahBlock, wahOn && !wahBypass); break;
+        case kParamScreamerBypass:
+            screamerBypass = value > 0.5f; chain.setEnabled(&screamerBlock, screamerOn && !screamerBypass); break;
+        case kParamChorusBypass:
+            chorusBypass = value > 0.5f; chain.setEnabled(&chorusBlock, chorusOn && !chorusBypass); break;
+        case kParamPhaserBypass:
+            phaserBypass = value > 0.5f; chain.setEnabled(&phaserBlock, phaserOn && !phaserBypass); break;
+        case kParamTremoloBypass:
+            tremoloBypass = value > 0.5f; chain.setEnabled(&tremoloBlock, tremoloOn && !tremoloBypass); break;
+        case kParamDelayBypass:
+            delayBypass = value > 0.5f; chain.setEnabled(&delayBlock, delayOn && !delayBypass); break;
+        case kParamReverbBypass:
+            reverbBypass = value > 0.5f; chain.setEnabled(&reverbBlock, reverbOn && !reverbBypass); break;
         }
     }
 
@@ -799,6 +741,18 @@ private:
 
     bool reverbOn = false;
     float reverbPosition = 9.0f, reverbRoomSize = 0.5f, reverbDamping = 0.5f, reverbMix = 0.3f;
+
+    // Bypass flags - independent from the *On* flags above. See the
+    // comment on the Bypass parameters in ChainParameters.hpp.
+    bool gateBypass = false;
+    bool compBypass = false;
+    bool wahBypass = false;
+    bool screamerBypass = false;
+    bool chorusBypass = false;
+    bool phaserBypass = false;
+    bool tremoloBypass = false;
+    bool delayBypass = false;
+    bool reverbBypass = false;
 
     DISTRHO_DECLARE_NON_COPYABLE(ChainPlugin)
 };

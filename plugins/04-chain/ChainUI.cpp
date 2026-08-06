@@ -1,15 +1,22 @@
 /*
- * AmpForge - Main Chain UI (Phase 9, Step 3: distinct modules + real knobs)
+ * AmpForge - Main Chain UI (Phase 9, Step 4: bypass, live values, presets, animation)
  *
- * Redesigned after feedback: each pedal now has its own accent color
- * and its own row of real, functional knobs (drag up/down to change
- * value) - no more identical gray boxes. Modules stack vertically and
- * scroll if they don't fit, instead of running off the right edge of
- * the window. Reordering is now done by dragging a module up or down.
+ * Changes from the previous version, based on feedback:
+ *   - The on/off switch now toggles a real *Bypass* parameter, separate
+ *     from the pedal's presence in the rack (the *On* parameter). The
+ *     card stays visible and dims when bypassed, instead of vanishing.
+ *   - Dragging a knob shows a floating tooltip with the live numeric
+ *     value (e.g. "-6.2 dB") right next to it.
+ *   - A preset bar under the title lets you jump straight to any of
+ *     the 6 factory presets without leaving this window.
+ *   - Values now animate (ease) toward their target instead of jumping
+ *     instantly - most noticeable when a preset changes many knobs at
+ *     once, or when the host automates a parameter.
  */
 
 #include "DistrhoUI.hpp"
 #include "ChainParameters.hpp"
+#include "ChainPresets.hpp"
 #include <vector>
 #include <algorithm>
 #include <cmath>
@@ -30,12 +37,16 @@ static const Color kColorRemove(230, 90, 100);
 static const Color kColorTextPrimary(235, 235, 240);
 static const Color kColorTextMuted(150, 150, 160);
 static const Color kColorTextDark(20, 20, 24);
+static const Color kColorTooltipBg(10, 10, 12);
+static const Color kColorPresetBar(22, 22, 27);
+static const Color kColorPresetActive(90, 170, 255);
 
 // --- Layout constants ---
-static constexpr float kTopBarHeight    = 60.0f;
+static constexpr float kTopBarHeight    = 52.0f;
+static constexpr float kPresetBarHeight = 40.0f;
 static constexpr float kPaletteWidth    = 190.0f;
 static constexpr float kPaletteItemH    = 42.0f;
-static constexpr float kRackTop         = kTopBarHeight + 20.0f;
+static constexpr float kRackTop         = kTopBarHeight + kPresetBarHeight + 20.0f;
 static constexpr float kModuleLeft      = kPaletteWidth + 20.0f;
 static constexpr float kModuleHeaderH   = 42.0f;
 static constexpr float kKnobAreaH       = 92.0f;
@@ -44,7 +55,9 @@ static constexpr float kKnobRadius      = 24.0f;
 static constexpr float kKnobSpacing     = 78.0f;
 static constexpr float kSwitchSize      = 18.0f;
 static constexpr float kRemoveSize      = 16.0f;
-static constexpr float kKnobDragSensitivity = 220.0f; // pixels of drag for full range sweep
+static constexpr float kKnobDragSensitivity = 220.0f;
+static constexpr float kAnimEaseFactor  = 0.28f; // higher = snappier, lower = more glide
+static constexpr float kAnimSnapEpsilon = 0.001f;
 
 struct KnobDef
 {
@@ -52,14 +65,16 @@ struct KnobDef
     int paramIndex;
     float minVal;
     float maxVal;
+    const char* unit;   // shown after the number, e.g. "dB", "ms", "Hz", "x"
+    int decimals;       // digits after the decimal point
+    bool asPercent;      // if true, display value*100 with a % suffix instead of unit/decimals
 };
 
-// One entry per block. Amp has onParam = -1 because it's always part
-// of the chain (no add/remove, no on/off switch).
 struct PedalDef
 {
     const char* name;
     int onParam;
+    int bypassParam; // -1 for Amp (can't be bypassed - it's the core of the chain)
     int positionParam;
     Color accent;
     std::vector<KnobDef> knobs;
@@ -68,71 +83,72 @@ struct PedalDef
 // clang-format off
 static const PedalDef kPedalDefs[] =
 {
-    { "Noise Gate", kParamGateOn,     kParamGatePosition,  Color(130, 150, 210), {
-        { "Thresh",  kParamGateThreshold, -80.0f, 0.0f },
-        { "Attack",  kParamGateAttack,      0.5f, 50.0f },
-        { "Release", kParamGateRelease,    10.0f, 1000.0f },
+    { "Noise Gate", kParamGateOn,     kParamGateBypass,     kParamGatePosition,  Color(130, 150, 210), {
+        { "Thresh",  kParamGateThreshold, -80.0f, 0.0f,    "dB", 1, false },
+        { "Attack",  kParamGateAttack,      0.5f, 50.0f,   "ms", 1, false },
+        { "Release", kParamGateRelease,    10.0f, 1000.0f, "ms", 0, false },
     }},
-    { "Compressor", kParamCompOn,     kParamCompPosition,  Color(175, 120, 225), {
-        { "Thresh",  kParamCompThreshold, -60.0f, 0.0f },
-        { "Ratio",   kParamCompRatio,       1.0f, 20.0f },
-        { "Attack",  kParamCompAttack,      0.5f, 100.0f },
-        { "Release", kParamCompRelease,    10.0f, 1000.0f },
-        { "Makeup",  kParamCompMakeup,      0.0f, 24.0f },
+    { "Compressor", kParamCompOn,     kParamCompBypass,     kParamCompPosition,  Color(175, 120, 225), {
+        { "Thresh",  kParamCompThreshold, -60.0f, 0.0f,    "dB", 1, false },
+        { "Ratio",   kParamCompRatio,       1.0f, 20.0f,   ":1", 1, false },
+        { "Attack",  kParamCompAttack,      0.5f, 100.0f,  "ms", 1, false },
+        { "Release", kParamCompRelease,    10.0f, 1000.0f, "ms", 0, false },
+        { "Makeup",  kParamCompMakeup,      0.0f, 24.0f,   "dB", 1, false },
     }},
-    { "Wah",        kParamWahOn,      kParamWahPosition,   Color(235, 155, 60), {
-        { "Pedal",   kParamWahPedal,  0.0f, 1.0f },
-        { "Q",       kParamWahQ,      0.5f, 10.0f },
+    { "Wah",        kParamWahOn,      kParamWahBypass,      kParamWahPosition,   Color(235, 155, 60), {
+        { "Pedal",   kParamWahPedal,  0.0f, 1.0f,  "", 0, true },
+        { "Q",       kParamWahQ,      0.5f, 10.0f, "", 1, false },
     }},
-    { "Screamer",   kParamScreamerOn, kParamScreamerPosition, Color(235, 95, 70), {
-        { "Drive",   kParamScreamerDrive,  1.0f, 20.0f },
-        { "Tone",    kParamScreamerTone,   0.05f, 1.0f },
-        { "Level",   kParamScreamerLevel, -24.0f, 12.0f },
+    { "Screamer",   kParamScreamerOn, kParamScreamerBypass, kParamScreamerPosition, Color(235, 95, 70), {
+        { "Drive",   kParamScreamerDrive,  1.0f, 20.0f,  "x", 1, false },
+        { "Tone",    kParamScreamerTone,   0.05f, 1.0f,  "",  0, true },
+        { "Level",   kParamScreamerLevel, -24.0f, 12.0f, "dB", 1, false },
     }},
-    { "Amp",        -1,               kParamAmpPosition,   Color(90, 170, 255), {
-        { "Drive",   kParamAmpDrive,    0.0f, 36.0f },
-        { "Bass",    kParamAmpBass,   -12.0f, 12.0f },
-        { "Mid",     kParamAmpMid,    -12.0f, 12.0f },
-        { "Treble",  kParamAmpTreble, -12.0f, 12.0f },
-        { "Volume",  kParamAmpVolume, -24.0f, 12.0f },
+    { "Amp",        -1,               -1,                   kParamAmpPosition,   Color(90, 170, 255), {
+        { "Drive",   kParamAmpDrive,    0.0f, 36.0f,  "dB", 1, false },
+        { "Bass",    kParamAmpBass,   -12.0f, 12.0f,  "dB", 1, false },
+        { "Mid",     kParamAmpMid,    -12.0f, 12.0f,  "dB", 1, false },
+        { "Treble",  kParamAmpTreble, -12.0f, 12.0f,  "dB", 1, false },
+        { "Volume",  kParamAmpVolume, -24.0f, 12.0f,  "dB", 1, false },
     }},
-    { "Chorus",     kParamChorusOn,   kParamChorusPosition, Color(70, 205, 195), {
-        { "Rate",    kParamChorusRate,   0.05f, 5.0f },
-        { "Depth",   kParamChorusDepth,  0.5f, 20.0f },
-        { "Mix",     kParamChorusMix,    0.0f, 1.0f },
+    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, Color(70, 205, 195), {
+        { "Rate",    kParamChorusRate,   0.05f, 5.0f,  "Hz", 2, false },
+        { "Depth",   kParamChorusDepth,  0.5f, 20.0f,  "ms", 1, false },
+        { "Mix",     kParamChorusMix,    0.0f, 1.0f,   "",   0, true },
     }},
-    { "Phaser",     kParamPhaserOn,   kParamPhaserPosition, Color(185, 115, 235), {
-        { "Rate",    kParamPhaserRate,  0.05f, 5.0f },
-        { "Depth",   kParamPhaserDepth, 0.0f, 1.0f },
-        { "Mix",     kParamPhaserMix,   0.0f, 1.0f },
+    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, Color(185, 115, 235), {
+        { "Rate",    kParamPhaserRate,  0.05f, 5.0f, "Hz", 2, false },
+        { "Depth",   kParamPhaserDepth, 0.0f, 1.0f,  "",   0, true },
+        { "Mix",     kParamPhaserMix,   0.0f, 1.0f,  "",   0, true },
     }},
-    { "Tremolo",    kParamTremoloOn,  kParamTremoloPosition, Color(235, 205, 60), {
-        { "Rate",    kParamTremoloRate,  0.5f, 15.0f },
-        { "Depth",   kParamTremoloDepth, 0.0f, 1.0f },
+    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, Color(235, 205, 60), {
+        { "Rate",    kParamTremoloRate,  0.5f, 15.0f, "Hz", 1, false },
+        { "Depth",   kParamTremoloDepth, 0.0f, 1.0f,  "",   0, true },
     }},
-    { "Delay",      kParamDelayOn,    kParamDelayPosition,  Color(95, 225, 145), {
-        { "Time",     kParamDelayTime,      10.0f, 1500.0f },
-        { "Feedback", kParamDelayFeedback,   0.0f, 0.95f },
-        { "Mix",      kParamDelayMix,        0.0f, 1.0f },
+    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  Color(95, 225, 145), {
+        { "Time",     kParamDelayTime,      10.0f, 1500.0f, "ms", 0, false },
+        { "Feedback", kParamDelayFeedback,   0.0f, 0.95f,   "",   0, true },
+        { "Mix",      kParamDelayMix,        0.0f, 1.0f,    "",   0, true },
     }},
-    { "Reverb",     kParamReverbOn,   kParamReverbPosition, Color(115, 125, 235), {
-        { "Room",     kParamReverbRoomSize, 0.0f, 1.0f },
-        { "Damping",  kParamReverbDamping,  0.0f, 1.0f },
-        { "Mix",      kParamReverbMix,      0.0f, 1.0f },
+    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, Color(115, 125, 235), {
+        { "Room",     kParamReverbRoomSize, 0.0f, 1.0f, "", 0, true },
+        { "Damping",  kParamReverbDamping,  0.0f, 1.0f, "", 0, true },
+        { "Mix",      kParamReverbMix,      0.0f, 1.0f, "", 0, true },
     }},
 };
 // clang-format on
 static constexpr int kPedalDefCount = sizeof(kPedalDefs) / sizeof(kPedalDefs[0]);
-static constexpr int kAmpPedalIndex = 4; // index of "Amp" within kPedalDefs
+static constexpr int kAmpPedalIndex = 4;
 
 class ChainUI : public UI
 {
 public:
     ChainUI()
-        : UI(1000, 700)
+        : UI(1000, 720)
     {
         loadSharedResources();
         std::fill(std::begin(paramValues), std::end(paramValues), 0.0f);
+        std::fill(std::begin(displayValues), std::end(displayValues), 0.0f);
     }
 
 protected:
@@ -141,6 +157,30 @@ protected:
         if (index < kParamCount)
             paramValues[index] = value;
         repaint();
+    }
+
+    // Called regularly by the host - this is what drives our value
+    // animation. We ease displayValues toward paramValues every tick
+    // and repaint while anything is still moving.
+    void uiIdle() override
+    {
+        bool anyChanged = false;
+        for (uint32_t i = 0; i < kParamCount; ++i)
+        {
+            const float diff = paramValues[i] - displayValues[i];
+            if (std::fabs(diff) > kAnimSnapEpsilon)
+            {
+                displayValues[i] += diff * kAnimEaseFactor;
+                anyChanged = true;
+            }
+            else if (displayValues[i] != paramValues[i])
+            {
+                displayValues[i] = paramValues[i];
+                anyChanged = true;
+            }
+        }
+        if (anyChanged)
+            repaint();
     }
 
     void onNanoDisplay() override
@@ -160,13 +200,15 @@ protected:
         fill();
         closePath();
 
-        fontSize(22.0f);
+        fontSize(20.0f);
         fillColor(kColorTextPrimary);
         textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
-        text(20.0f, 30.0f, "AmpForge", nullptr);
+        text(20.0f, kTopBarHeight * 0.5f, "AmpForge", nullptr);
 
+        drawPresetBar(width);
         drawPalette(height);
         drawRack(width, height);
+        drawKnobTooltip();
     }
 
     bool onMouse(const MouseEvent& ev) override
@@ -193,8 +235,24 @@ protected:
         const float mx = static_cast<float>(ev.pos.getX());
         const float my = static_cast<float>(ev.pos.getY());
 
+        // --- Preset bar clicks ---
+        if (my < kTopBarHeight + kPresetBarHeight && my >= kTopBarHeight)
+        {
+            const float presetW = 150.0f;
+            for (uint32_t i = 0; i < kProgramCount; ++i)
+            {
+                const float px = 12.0f + i * (presetW + 8.0f);
+                if (mx >= px && mx <= px + presetW)
+                {
+                    applyPreset(i);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         // --- Palette clicks ---
-        if (mx < kPaletteWidth && my > kTopBarHeight)
+        if (mx < kPaletteWidth && my > kTopBarHeight + kPresetBarHeight)
         {
             for (int i = 0; i < kPedalDefCount; ++i)
             {
@@ -203,7 +261,7 @@ protected:
                 const float itemY = kRackTop + i * kPaletteItemH;
                 if (my >= itemY && my < itemY + kPaletteItemH)
                 {
-                    togglePedal(i);
+                    togglePedalPresence(i);
                     return true;
                 }
             }
@@ -212,7 +270,7 @@ protected:
 
         // --- Module clicks (knobs / switch / remove / drag handle) ---
         const std::vector<int> order = getActiveOrder();
-        float y = kRackTop + scrollOffset;
+        float y = kRackTop;
 
         for (size_t slot = 0; slot < order.size(); ++slot)
         {
@@ -223,34 +281,34 @@ protected:
 
             if (my >= y && my < y + moduleH && mx >= kModuleLeft && mx <= kModuleLeft + moduleW)
             {
-                // On/off switch (top-left of header) - not for Amp
                 if (pedalIndex != kAmpPedalIndex)
                 {
+                    // Bypass switch (top-left of header)
                     const float sx = kModuleLeft + 12.0f;
                     const float sy = y + (kModuleHeaderH - kSwitchSize) * 0.5f;
                     if (mx >= sx && mx <= sx + kSwitchSize * 1.6f && my >= sy && my <= sy + kSwitchSize)
                     {
-                        const int onParam = def.onParam;
-                        const bool currentlyOn = paramValues[onParam] > 0.5f;
-                        editParameter(onParam, true);
-                        setParameterValue(onParam, currentlyOn ? 0.0f : 1.0f);
-                        paramValues[onParam] = currentlyOn ? 0.0f : 1.0f;
-                        editParameter(onParam, false);
+                        const int bypassParam = def.bypassParam;
+                        const bool currentlyBypassed = paramValues[bypassParam] > 0.5f;
+                        editParameter(bypassParam, true);
+                        setParameterValue(bypassParam, currentlyBypassed ? 0.0f : 1.0f);
+                        paramValues[bypassParam] = currentlyBypassed ? 0.0f : 1.0f;
+                        editParameter(bypassParam, false);
                         repaint();
                         return true;
                     }
 
-                    // Remove button (top-right of header)
+                    // Remove button (top-right of header) - takes it off the board entirely
                     const float rx = kModuleLeft + moduleW - kRemoveSize - 12.0f;
                     const float ry = y + (kModuleHeaderH - kRemoveSize) * 0.5f;
                     if (mx >= rx && mx <= rx + kRemoveSize && my >= ry && my <= ry + kRemoveSize)
                     {
-                        togglePedal(pedalIndex);
+                        togglePedalPresence(pedalIndex);
                         return true;
                     }
                 }
 
-                // Knobs (in the body area below the header)
+                // Knobs
                 const float knobCenterY = y + kModuleHeaderH + kKnobAreaH * 0.5f - 8.0f;
                 float knobX = kModuleLeft + 50.0f;
                 for (size_t k = 0; k < def.knobs.size(); ++k)
@@ -285,27 +343,25 @@ protected:
     {
         const float my = static_cast<float>(ev.pos.getY());
 
-        // --- Knob drag: vertical mouse movement changes the value ---
         if (draggingKnobPedal >= 0)
         {
             const KnobDef& knob = kPedalDefs[draggingKnobPedal].knobs[draggingKnobIndex];
-            const float deltaPixels = draggingKnobStartY - my; // up = increase
+            const float deltaPixels = draggingKnobStartY - my;
             const float range = knob.maxVal - knob.minVal;
             float newValue = draggingKnobStartValue + (deltaPixels / kKnobDragSensitivity) * range;
             newValue = std::max(knob.minVal, std::min(knob.maxVal, newValue));
 
             setParameterValue(knob.paramIndex, newValue);
             paramValues[knob.paramIndex] = newValue;
+            displayValues[knob.paramIndex] = newValue; // snap instantly while actively dragging
             repaint();
             return true;
         }
 
-        // --- Module drag: reorder by swapping with whichever module the
-        // cursor is currently over ---
         if (draggingModuleIndex >= 0)
         {
             const std::vector<int> order = getActiveOrder();
-            float y = kRackTop + scrollOffset;
+            float y = kRackTop;
             int hoveredPedal = -1;
 
             for (int pedalIndex : order)
@@ -330,6 +386,8 @@ protected:
                 setParameterValue(hoveredPosParam, draggedPos);
                 paramValues[draggedPosParam] = hoveredPos;
                 paramValues[hoveredPosParam] = draggedPos;
+                displayValues[draggedPosParam] = hoveredPos;
+                displayValues[hoveredPosParam] = draggedPos;
                 repaint();
             }
             return true;
@@ -338,22 +396,11 @@ protected:
         return false;
     }
 
-    bool onScroll(const ScrollEvent& ev) override
-    {
-        const float contentHeight = totalContentHeight();
-        const float visibleHeight = static_cast<float>(getHeight()) - kRackTop;
-        const float maxScroll = std::max(0.0f, contentHeight - visibleHeight);
-
-        scrollOffset -= static_cast<float>(ev.delta.getY()) * 24.0f;
-        scrollOffset = std::max(-maxScroll, std::min(0.0f, scrollOffset));
-        repaint();
-        return true;
-    }
-
 private:
-    // Adds or removes a pedal from the active chain. Adding appends it
-    // at the end of the current visible order (max active position + 1).
-    void togglePedal(int pedalIndex)
+    // Adds or removes a pedal from the board (the *On* parameter).
+    // This is distinct from Bypass - removing here makes the card
+    // disappear entirely, bypassing just mutes it while it stays visible.
+    void togglePedalPresence(int pedalIndex)
     {
         const int onParam = kPedalDefs[pedalIndex].onParam;
         if (onParam < 0)
@@ -388,6 +435,27 @@ private:
         repaint();
     }
 
+    // Applies a full factory preset by replaying every parameter value
+    // through setParameterValue(), exactly like ChainPlugin::loadProgram()
+    // does on the DSP side - kept in sync because both read from the
+    // same kPresets table in ChainPresets.hpp.
+    void applyPreset(uint32_t index)
+    {
+        if (index >= kProgramCount)
+            return;
+
+        const PresetDefinition& preset = kPresets[index];
+        for (uint32_t i = 0; i < kParamCount; ++i)
+        {
+            editParameter(i, true);
+            setParameterValue(i, preset.values[i]);
+            paramValues[i] = preset.values[i];
+            editParameter(i, false);
+        }
+        activePreset = static_cast<int>(index);
+        repaint();
+    }
+
     std::vector<int> getActiveOrder() const
     {
         std::vector<int> active;
@@ -404,19 +472,48 @@ private:
         return active;
     }
 
-    float totalContentHeight() const
+    void formatKnobValue(const KnobDef& knob, float value, char* buf, size_t bufSize) const
     {
-        const std::vector<int> order = getActiveOrder();
-        const float moduleH = kModuleHeaderH + kKnobAreaH;
-        if (order.empty())
-            return 0.0f;
-        return static_cast<float>(order.size()) * moduleH + static_cast<float>(order.size() - 1) * kModuleGap;
+        if (knob.asPercent)
+            std::snprintf(buf, bufSize, "%.0f%%", value * 100.0f);
+        else
+            std::snprintf(buf, bufSize, "%.*f%s", knob.decimals, value, knob.unit);
+    }
+
+    void drawPresetBar(float width)
+    {
+        (void)width;
+        beginPath();
+        rect(0.0f, kTopBarHeight, static_cast<float>(getWidth()), kPresetBarHeight);
+        fillColor(kColorPresetBar);
+        fill();
+        closePath();
+
+        const float presetW = 150.0f;
+        for (uint32_t i = 0; i < kProgramCount; ++i)
+        {
+            const float px = 12.0f + i * (presetW + 8.0f);
+            const float py = kTopBarHeight + 5.0f;
+            const bool isActive = (activePreset == static_cast<int>(i));
+
+            beginPath();
+            roundedRect(px, py, presetW, kPresetBarHeight - 10.0f, 6.0f);
+            fillColor(isActive ? kColorPresetActive : kColorPanel);
+            fill();
+            closePath();
+
+            fontSize(13.0f);
+            fillColor(isActive ? kColorTextDark : kColorTextPrimary);
+            textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+            text(px + presetW * 0.5f, py + (kPresetBarHeight - 10.0f) * 0.5f, kPresets[i].name, nullptr);
+        }
     }
 
     void drawPalette(float height)
     {
+        const float paletteTop = kTopBarHeight + kPresetBarHeight;
         beginPath();
-        rect(0.0f, kTopBarHeight, kPaletteWidth, height - kTopBarHeight);
+        rect(0.0f, paletteTop, kPaletteWidth, height - paletteTop);
         fillColor(kColorPanel);
         fill();
         closePath();
@@ -434,7 +531,6 @@ private:
                 beginPath();
                 roundedRect(6.0f, itemY + 3.0f, kPaletteWidth - 12.0f, kPaletteItemH - 6.0f, 6.0f);
                 fillColor(kPedalDefs[i].accent);
-                fillColor(Color(kPedalDefs[i].accent.red, kPedalDefs[i].accent.green, kPedalDefs[i].accent.blue, 0.18f));
                 fill();
                 closePath();
             }
@@ -446,7 +542,7 @@ private:
             closePath();
 
             fontSize(15.0f);
-            fillColor(isActive ? kColorTextPrimary : kColorTextMuted);
+            fillColor(isActive ? kColorTextDark : kColorTextMuted);
             textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
             text(42.0f, itemY + kPaletteItemH * 0.5f, kPedalDefs[i].name, nullptr);
         }
@@ -461,23 +557,22 @@ private:
     {
         const std::vector<int> order = getActiveOrder();
         const float moduleW = width - kModuleLeft - 20.0f;
-        float y = kRackTop + scrollOffset;
+        float y = kRackTop;
 
-        // Clip drawing to the rack area so modules don't paint over the
-        // top bar or palette while scrolling.
         save();
-        scissor(kModuleLeft - 10.0f, kTopBarHeight, moduleW + 20.0f, height - kTopBarHeight);
+        scissor(kModuleLeft - 10.0f, kTopBarHeight + kPresetBarHeight, moduleW + 20.0f, height - kTopBarHeight - kPresetBarHeight);
 
         for (int pedalIndex : order)
         {
             const PedalDef& def = kPedalDefs[pedalIndex];
             const float moduleH = kModuleHeaderH + kKnobAreaH;
             const bool isDraggingThis = (pedalIndex == draggingModuleIndex);
+            const bool isBypassed = (def.bypassParam >= 0) && (paramValues[def.bypassParam] > 0.5f);
+            const float bodyAlpha = isBypassed ? 0.55f : 1.0f;
 
-            // Module background
             beginPath();
             roundedRect(kModuleLeft, y, moduleW, moduleH, 10.0f);
-            fillColor(kColorPanel);
+            fillColor(Color(kColorPanel.red, kColorPanel.green, kColorPanel.blue, bodyAlpha));
             fill();
             closePath();
 
@@ -491,16 +586,16 @@ private:
                 closePath();
             }
 
-            // Header strip, tinted with the pedal's accent color
+            // Header strip
+            const Color headerColor(def.accent.red, def.accent.green, def.accent.blue, bodyAlpha);
             beginPath();
             roundedRect(kModuleLeft, y, moduleW, kModuleHeaderH, 10.0f);
-            fillColor(def.accent);
+            fillColor(headerColor);
             fill();
             closePath();
-            // square off the bottom corners of the header so it reads as a bar
             beginPath();
             rect(kModuleLeft, y + kModuleHeaderH * 0.5f, moduleW, kModuleHeaderH * 0.5f);
-            fillColor(def.accent);
+            fillColor(headerColor);
             fill();
             closePath();
 
@@ -509,9 +604,17 @@ private:
             textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
             text(kModuleLeft + (pedalIndex == kAmpPedalIndex ? 16.0f : 44.0f), y + kModuleHeaderH * 0.5f, def.name, nullptr);
 
+            if (isBypassed)
+            {
+                fontSize(11.0f);
+                fillColor(kColorTextDark);
+                textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+                text(kModuleLeft + moduleW * 0.5f - 10.0f, y + kModuleHeaderH * 0.5f, "bypassed", nullptr);
+            }
+
             if (pedalIndex != kAmpPedalIndex)
             {
-                const bool isOn = paramValues[def.onParam] > 0.5f;
+                const bool isOn = !isBypassed; // switch shows ON when NOT bypassed
                 const float sx = kModuleLeft + 12.0f;
                 const float sy = y + (kModuleHeaderH - kSwitchSize) * 0.5f;
                 beginPath();
@@ -546,12 +649,13 @@ private:
                 text(kModuleLeft + moduleW - 12.0f, y + kModuleHeaderH * 0.5f, "always on", nullptr);
             }
 
-            // Knobs
+            // Knobs - driven by displayValues (animated), not paramValues,
+            // so preset switches and automation glide instead of jumping.
             const float knobCenterY = y + kModuleHeaderH + kKnobAreaH * 0.5f - 8.0f;
             float knobX = kModuleLeft + 50.0f;
             for (const KnobDef& knob : def.knobs)
             {
-                drawKnob(knobX, knobCenterY, knob, paramValues[knob.paramIndex], def.accent);
+                drawKnob(knobX, knobCenterY, knob, displayValues[knob.paramIndex], def.accent, bodyAlpha);
                 knobX += kKnobSpacing;
             }
 
@@ -559,52 +663,32 @@ private:
         }
 
         restore();
-
-        // Scrollbar hint if content overflows
-        const float contentHeight = totalContentHeight();
-        const float visibleHeight = height - kRackTop;
-        if (contentHeight > visibleHeight)
-        {
-            const float trackH = visibleHeight - 10.0f;
-            const float thumbH = std::max(30.0f, trackH * (visibleHeight / contentHeight));
-            const float scrollFrac = (-scrollOffset) / std::max(1.0f, contentHeight - visibleHeight);
-            const float thumbY = kRackTop + 5.0f + scrollFrac * (trackH - thumbH);
-
-            beginPath();
-            roundedRect(width - 6.0f, thumbY, 4.0f, thumbH, 2.0f);
-            fillColor(kColorKnobTrack);
-            fill();
-            closePath();
-        }
     }
 
-    void drawKnob(float cx, float cy, const KnobDef& knob, float value, Color accent)
+    void drawKnob(float cx, float cy, const KnobDef& knob, float value, Color accent, float alpha)
     {
         const float t = (value - knob.minVal) / (knob.maxVal - knob.minVal);
         const float startAngle = 0.75f * static_cast<float>(M_PI);
         const float endAngle   = 2.25f * static_cast<float>(M_PI);
         const float valueAngle = startAngle + t * (endAngle - startAngle);
 
-        // Track (background arc)
         beginPath();
         arc(cx, cy, kKnobRadius, startAngle, endAngle, CW);
-        strokeColor(kColorKnobTrack);
+        strokeColor(Color(kColorKnobTrack.red, kColorKnobTrack.green, kColorKnobTrack.blue, alpha));
         strokeWidth(4.0f);
         stroke();
         closePath();
 
-        // Value arc
         beginPath();
         arc(cx, cy, kKnobRadius, startAngle, valueAngle, CW);
-        strokeColor(accent);
+        strokeColor(Color(accent.red, accent.green, accent.blue, alpha));
         strokeWidth(4.0f);
         stroke();
         closePath();
 
-        // Center dot + pointer line
         beginPath();
         circle(cx, cy, kKnobRadius - 8.0f);
-        fillColor(kColorPanel);
+        fillColor(Color(kColorPanel.red, kColorPanel.green, kColorPanel.blue, alpha));
         fill();
         closePath();
 
@@ -613,18 +697,69 @@ private:
         beginPath();
         moveTo(cx, cy);
         lineTo(px, py);
-        strokeColor(kColorTextPrimary);
+        strokeColor(Color(kColorTextPrimary.red, kColorTextPrimary.green, kColorTextPrimary.blue, alpha));
         strokeWidth(2.0f);
         stroke();
         closePath();
 
         fontSize(11.0f);
-        fillColor(kColorTextMuted);
+        fillColor(Color(kColorTextMuted.red, kColorTextMuted.green, kColorTextMuted.blue, alpha));
         textAlign(ALIGN_CENTER | ALIGN_TOP);
         text(cx, cy + kKnobRadius + 6.0f, knob.label, nullptr);
     }
 
+    // Floating tooltip showing the live numeric value while a knob is
+    // being dragged - drawn last so it sits above everything else.
+    void drawKnobTooltip()
+    {
+        if (draggingKnobPedal < 0)
+            return;
+
+        const std::vector<int> order = getActiveOrder();
+        float y = kRackTop;
+        float knobX = 0.0f, knobY = 0.0f;
+        bool found = false;
+
+        for (int pedalIndex : order)
+        {
+            const float moduleH = kModuleHeaderH + kKnobAreaH;
+            if (pedalIndex == draggingKnobPedal)
+            {
+                const PedalDef& def = kPedalDefs[pedalIndex];
+                const float knobCenterY = y + kModuleHeaderH + kKnobAreaH * 0.5f - 8.0f;
+                knobX = kModuleLeft + 50.0f + draggingKnobIndex * kKnobSpacing;
+                knobY = knobCenterY;
+                found = true;
+                break;
+            }
+            y += moduleH + kModuleGap;
+        }
+        if (!found)
+            return;
+
+        const KnobDef& knob = kPedalDefs[draggingKnobPedal].knobs[draggingKnobIndex];
+        char buf[32];
+        formatKnobValue(knob, paramValues[knob.paramIndex], buf, sizeof(buf));
+
+        const float boxW = 70.0f;
+        const float boxH = 26.0f;
+        const float boxX = knobX - boxW * 0.5f;
+        const float boxY = knobY - kKnobRadius - boxH - 12.0f;
+
+        beginPath();
+        roundedRect(boxX, boxY, boxW, boxH, 5.0f);
+        fillColor(kColorTooltipBg);
+        fill();
+        closePath();
+
+        fontSize(14.0f);
+        fillColor(kColorTextPrimary);
+        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+        text(boxX + boxW * 0.5f, boxY + boxH * 0.5f, buf, nullptr);
+    }
+
     float paramValues[kParamCount];
+    float displayValues[kParamCount]; // animated/eased version of paramValues, used for drawing
 
     int draggingModuleIndex = -1;
 
@@ -633,7 +768,7 @@ private:
     float draggingKnobStartY = 0.0f;
     float draggingKnobStartValue = 0.0f;
 
-    float scrollOffset = 0.0f;
+    int activePreset = -1;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChainUI)
 };
