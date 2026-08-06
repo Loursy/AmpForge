@@ -15,6 +15,7 @@
  */
 
 #include "DistrhoPlugin.hpp"
+#include "ChainParameters.hpp"
 #include "ScreamerBlock.hpp"
 #include "AmpBlock.hpp"
 #include "DelayBlock.hpp"
@@ -29,82 +30,6 @@
 #include <cmath>
 
 START_NAMESPACE_DISTRHO
-
-enum Parameters
-{
-    // Noise Gate
-    kParamGateOn = 0,
-    kParamGatePosition,
-    kParamGateThreshold,
-    kParamGateAttack,
-    kParamGateRelease,
-
-    // Compressor
-    kParamCompOn,
-    kParamCompPosition,
-    kParamCompThreshold,
-    kParamCompRatio,
-    kParamCompAttack,
-    kParamCompRelease,
-    kParamCompMakeup,
-
-    // Wah
-    kParamWahOn,
-    kParamWahPosition,
-    kParamWahPedal,
-    kParamWahQ,
-
-    // Screamer
-    kParamScreamerOn,
-    kParamScreamerPosition,
-    kParamScreamerDrive,
-    kParamScreamerTone,
-    kParamScreamerLevel,
-
-    // Amp (always enabled)
-    kParamAmpPosition,
-    kParamAmpDrive,
-    kParamAmpBass,
-    kParamAmpMid,
-    kParamAmpTreble,
-    kParamAmpVolume,
-
-    // Chorus
-    kParamChorusOn,
-    kParamChorusPosition,
-    kParamChorusRate,
-    kParamChorusDepth,
-    kParamChorusMix,
-
-    // Phaser
-    kParamPhaserOn,
-    kParamPhaserPosition,
-    kParamPhaserRate,
-    kParamPhaserDepth,
-    kParamPhaserMix,
-
-    // Tremolo
-    kParamTremoloOn,
-    kParamTremoloPosition,
-    kParamTremoloRate,
-    kParamTremoloDepth,
-
-    // Delay
-    kParamDelayOn,
-    kParamDelayPosition,
-    kParamDelayTime,
-    kParamDelayFeedback,
-    kParamDelayMix,
-
-    // Reverb
-    kParamReverbOn,
-    kParamReverbPosition,
-    kParamReverbRoomSize,
-    kParamReverbDamping,
-    kParamReverbMix,
-
-    kParamCount
-};
 
 // --- Factory presets ---
 //
