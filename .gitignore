@@ -1,9 +1,6 @@
 
 build/
 
-# Local-only dev notes, not for the public repo.
-CLAUDE.md
-
 
 *.o
 *.a
