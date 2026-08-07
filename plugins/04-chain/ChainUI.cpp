@@ -543,6 +543,8 @@ protected:
                 }
 
                 draggingModuleIndex = pedalIndex;
+                dragModuleGrabOffsetY = my - y;
+                dragModuleCurrentY = y;
                 editParameter(def.positionParam, true);
                 return true;
             }
@@ -592,26 +594,50 @@ protected:
 
         if (draggingModuleIndex >= 0)
         {
-            const std::vector<int> order = getActiveOrder();
-            float y = kRackTop + scrollOffset;
-            int hoveredPedal = -1;
+            // The card itself floats and follows the cursor (drawRack()
+            // draws it separately, on top, at dragModuleCurrentY) instead of
+            // staying pinned in its slot until a swap happens - that's what
+            // made the old behavior not actually feel like drag-and-drop.
+            dragModuleCurrentY = my - dragModuleGrabOffsetY;
 
-            for (int pedalIndex : order)
+            const float moduleH = kModuleHeaderH + kKnobAreaH;
+            const float draggedCenterY = dragModuleCurrentY + moduleH * 0.5f;
+
+            // Where the floating card's center currently sits among the
+            // OTHER cards (stacked as if the dragged one weren't there)
+            // decides where it will land - the rest of the rack reflows
+            // live to open up a gap there, instead of a single pairwise swap.
+            std::vector<int> others;
+            for (int p : getActiveOrder())
+                if (p != draggingModuleIndex)
+                    others.push_back(p);
+
+            int insertAt = static_cast<int>(others.size());
+            float oy = kRackTop + scrollOffset;
+            for (size_t i = 0; i < others.size(); ++i)
             {
-                const float moduleH = kModuleHeaderH + kKnobAreaH;
-                if (my >= y && my < y + moduleH)
+                if (draggedCenterY < oy + moduleH * 0.5f)
                 {
-                    hoveredPedal = pedalIndex;
+                    insertAt = static_cast<int>(i);
                     break;
                 }
-                y += moduleH + kModuleGap;
+                oy += moduleH + kModuleGap;
             }
 
-            if (hoveredPedal >= 0 && hoveredPedal != draggingModuleIndex)
+            others.insert(others.begin() + insertAt, draggingModuleIndex);
+
+            for (size_t i = 0; i < others.size(); ++i)
             {
-                swapPositions(draggingModuleIndex, hoveredPedal);
-                repaint();
+                const int posParam = kPedalDefs[others[i]].positionParam;
+                const float newPos = static_cast<float>(i);
+                if (paramValues[posParam] != newPos)
+                {
+                    setParameterValue(posParam, newPos);
+                    paramValues[posParam] = newPos;
+                }
             }
+
+            repaint();
             return true;
         }
 
@@ -1572,6 +1598,7 @@ private:
     {
         const std::vector<int> order = getActiveOrder();
         const float moduleW = width - kModuleLeft - 20.0f;
+        const float moduleH = kModuleHeaderH + kKnobAreaH;
         float y = kRackTop + scrollOffset;
 
         save();
@@ -1579,6 +1606,49 @@ private:
 
         for (int pedalIndex : order)
         {
+            // The dragged card is drawn separately, floating on top, after
+            // the rest of the stack - and skipped here without advancing y,
+            // so the other cards close up around wherever it would land.
+            if (pedalIndex == draggingModuleIndex)
+                continue;
+
+            drawModuleCard(pedalIndex, y, moduleW);
+            y += moduleH + kModuleGap;
+        }
+
+        restore();
+
+        if (draggingModuleIndex >= 0)
+            drawModuleCard(draggingModuleIndex, dragModuleCurrentY, moduleW);
+
+        const float contentHeight = totalContentHeight();
+        const float visibleHeight = height - kRackTop;
+        if (contentHeight > visibleHeight)
+        {
+            const float trackH = visibleHeight - 10.0f;
+            const float thumbH = std::max(30.0f, trackH * (visibleHeight / contentHeight));
+            const float scrollFrac = (-scrollOffset) / std::max(1.0f, contentHeight - visibleHeight);
+            const float thumbY = kRackTop + 5.0f + scrollFrac * (trackH - thumbH);
+
+            beginPath();
+            roundedRect(width - 7.0f, kRackTop + 5.0f, 4.0f, trackH, 2.0f);
+            fillColor(Color(255, 255, 255, 0.04f));
+            fill();
+            closePath();
+
+            beginPath();
+            roundedRect(width - 7.0f, thumbY, 4.0f, thumbH, 2.0f);
+            fillColor(kColorScrollbar);
+            fill();
+            closePath();
+        }
+    }
+
+    // Draws one pedal card at the given top-Y. Used both for the normal
+    // stacked rack and (with a live, cursor-following y) for whichever card
+    // is currently being dragged to reorder.
+    void drawModuleCard(int pedalIndex, float y, float moduleW)
+    {
             const PedalDef& def = kPedalDefs[pedalIndex];
             const float moduleH = kModuleHeaderH + kKnobAreaH;
             const bool isDraggingThis = (pedalIndex == draggingModuleIndex);
@@ -1587,11 +1657,16 @@ private:
             const float bodyAlpha = (isBypassed ? 0.55f : 1.0f) * alpha;
             const float drawY = y + (1.0f - alpha) * 16.0f; // slide in/out
 
-            // Drop shadow, for a bit of depth against the rack background.
+            // Drop shadow, for a bit of depth against the rack background -
+            // bigger and darker while being dragged, so the card reads as
+            // physically "picked up" off the rack rather than just outlined.
+            const float shadowOffset = isDraggingThis ? 12.0f : 5.0f;
+            const float shadowFeather = isDraggingThis ? 26.0f : 14.0f;
+            const float shadowAlpha = isDraggingThis ? 0.75f : 0.5f;
             beginPath();
-            rect(kModuleLeft - 20.0f, drawY - 10.0f, moduleW + 40.0f, moduleH + 40.0f);
-            fillPaint(boxGradient(kModuleLeft, drawY + 5.0f, moduleW, moduleH, 10.0f, 14.0f,
-                                   Color(0, 0, 0, 0.5f * bodyAlpha), Color(0, 0, 0, 0.0f)));
+            rect(kModuleLeft - 30.0f, drawY - 15.0f, moduleW + 60.0f, moduleH + 60.0f);
+            fillPaint(boxGradient(kModuleLeft, drawY + shadowOffset, moduleW, moduleH, 10.0f, shadowFeather,
+                                   Color(0, 0, 0, shadowAlpha * bodyAlpha), Color(0, 0, 0, 0.0f)));
             fill();
             closePath();
 
@@ -1737,33 +1812,6 @@ private:
                 drawKnob(knobX, knobCenterY, knob, displayValues[knob.paramIndex], def.accent, bodyAlpha, isDraggingKnob, isEditingKnob);
                 knobX += kKnobSpacing;
             }
-
-            y += moduleH + kModuleGap;
-        }
-
-        restore();
-
-        const float contentHeight = totalContentHeight();
-        const float visibleHeight = height - kRackTop;
-        if (contentHeight > visibleHeight)
-        {
-            const float trackH = visibleHeight - 10.0f;
-            const float thumbH = std::max(30.0f, trackH * (visibleHeight / contentHeight));
-            const float scrollFrac = (-scrollOffset) / std::max(1.0f, contentHeight - visibleHeight);
-            const float thumbY = kRackTop + 5.0f + scrollFrac * (trackH - thumbH);
-
-            beginPath();
-            roundedRect(width - 7.0f, kRackTop + 5.0f, 4.0f, trackH, 2.0f);
-            fillColor(Color(255, 255, 255, 0.04f));
-            fill();
-            closePath();
-
-            beginPath();
-            roundedRect(width - 7.0f, thumbY, 4.0f, thumbH, 2.0f);
-            fillColor(kColorScrollbar);
-            fill();
-            closePath();
-        }
     }
 
     void drawKnob(float cx, float cy, const KnobDef& knob, float value, const Color& accent, float alpha, bool isDragging, bool isEditing)
@@ -1904,6 +1952,8 @@ private:
     float lastMouseY = -1.0f;
 
     int draggingModuleIndex = -1;
+    float dragModuleGrabOffsetY = 0.0f;
+    float dragModuleCurrentY = 0.0f;
 
     int draggingKnobPedal = -1;
     int draggingKnobIndex = -1;
