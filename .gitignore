@@ -1,8 +1,7 @@
 
 build/
 
-# Claude Code's own project-onboarding notes - local only, not for the
-# public repo.
+# Local-only dev notes, not for the public repo.
 CLAUDE.md
 
 
