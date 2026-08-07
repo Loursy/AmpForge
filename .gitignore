@@ -1,6 +1,10 @@
 
 build/
 
+# Claude Code's own project-onboarding notes - local only, not for the
+# public repo.
+CLAUDE.md
+
 
 *.o
 *.a

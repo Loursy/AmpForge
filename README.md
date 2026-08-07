@@ -21,7 +21,14 @@ Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
 - **Drag-and-drop pedalboard UI** — add pedals from a palette, drag
   them into the rack, reorder by dragging cards (other cards live-reflow
   around wherever you're about to drop it), real footswitch-style
-  bypass separate from add/remove.
+  bypass separate from add/remove (bypassed pedals stay fully legible,
+  just desaturated to a dead-metal look with their LED dark, instead of
+  fading into a washed-out ghost of the card).
+- **Noise Gate with an adjustable Range** — instead of slamming quiet
+  passages to total silence, it attenuates by a Range you dial in
+  (0–80dB), with hysteresis and a hold time so it doesn't choke a
+  note's natural decay or chatter on signal hovering near the
+  threshold.
 - **6 factory presets** (Fender Clean, Marshall Rock, Shredder Lead,
   Metal Rhythm, Ambient Shoegaze, Funk Clean) plus **custom presets**
   you can save, update, and delete from within the plugin.
@@ -60,8 +67,8 @@ don't need it.
 ### 2. Clone and build
 
 ```bash
-git clone https://github.com/Loursy/ampforge.git
-cd ampforge
+git clone https://github.com/Loursy/AmpForge.git
+cd AmpForge
 mkdir build && cd build
 cmake .. -G Ninja
 ninja
@@ -175,4 +182,4 @@ Issues and pull requests are welcome. The codebase is organized as:
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+GPL-3.0-or-later — see [LICENSE](LICENSE).

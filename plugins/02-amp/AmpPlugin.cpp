@@ -41,7 +41,7 @@ protected:
     const char* getLabel() const override        { return "AmpForgeAmp"; }
     const char* getDescription() const override   { return "First real amp module of the AmpForge project: drive + 3-band tone stack."; }
     const char* getMaker() const override          { return "Atakan"; }
-    const char* getLicense() const override        { return "MIT"; }
+    const char* getLicense() const override        { return "GPL-3.0-or-later"; }
     uint32_t getVersion() const override            { return d_version(0, 1, 0); }
     int64_t getUniqueId() const override            { return d_cconst('A', 'm', 'p', '1'); }
 

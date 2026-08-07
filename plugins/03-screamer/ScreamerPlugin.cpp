@@ -33,7 +33,7 @@ protected:
     const char* getLabel() const override        { return "AmpForgeScreamer"; }
     const char* getDescription() const override   { return "Tube Screamer style overdrive pedal module for AmpForge."; }
     const char* getMaker() const override          { return "Atakan"; }
-    const char* getLicense() const override        { return "MIT"; }
+    const char* getLicense() const override        { return "GPL-3.0-or-later"; }
     uint32_t getVersion() const override            { return d_version(0, 1, 0); }
     int64_t getUniqueId() const override            { return d_cconst('S', 'c', 'r', 'm'); }
 
