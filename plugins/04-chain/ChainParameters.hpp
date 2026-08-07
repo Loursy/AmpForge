@@ -132,7 +132,91 @@ enum Parameters
     // Cabinet additions above.
     kParamGateRange,
 
+    // Input Gain - a fixed pre-chain trim, always applied first and not
+    // part of the reorderable pedalboard (see ChainUI.cpp's dedicated
+    // Input panel). Guitars/interfaces feed wildly different levels into
+    // the plugin; without a way to normalize that first, one Noise Gate
+    // threshold default can't work for everyone - trimming here, ahead
+    // of the gate, is what lets it. Appended at the end like every block
+    // above, so existing parameter indices/presets stay unchanged.
+    kParamInputGain,
+
+    // Input Level - the post-trim peak level, reported back to the UI so
+    // players can see how hot their signal is while dialing Input Gain
+    // and the Noise Gate in together. Output-only (kParameterIsOutput):
+    // ChainPlugin::run() writes it every block, the host polls it and
+    // forwards the value to the UI's parameterChanged() - the same
+    // mechanism DPF's own Meters example uses.
+    kParamInputLevel,
+
+    // Tempo sync - lets Delay/Tremolo/Chorus lock their rate to the host's
+    // BPM (via DPF's TimePosition API) instead of only the free-running
+    // ms/Hz knob. Each is a single index into kSyncDivisions below: 0 means
+    // "Free" (sync off, the block's own Time/Rate parameter is used
+    // unchanged), any other value picks a musical note division that
+    // ChainPlugin::run() recomputes from the host tempo every block.
+    // Appended at the end like every block above, so existing parameter
+    // indices/presets stay unchanged.
+    kParamDelaySync,
+    kParamTremoloSync,
+    kParamChorusSync,
+
+    // CPU Load - how much of the available per-block time run() actually
+    // used (1.0 = took the whole block interval, i.e. right at the edge of
+    // an audio dropout), reported back to the UI the same way Input Level
+    // is above. Output-only (kParameterIsOutput); ChainPlugin::run() times
+    // itself with std::chrono and writes this every block.
+    kParamCpuLoad,
+
+    // Tuner - a standalone pitch-detection overlay (core/PitchDetector.hpp)
+    // that taps a copy of the post-Input-Gain, pre-chain signal, entirely
+    // outside the reorderable pedalboard, so it always reads the guitar's
+    // actual pitch regardless of what Distortion/Wah/etc. are doing to the
+    // signal that reaches the amp. kParamTunerOn is the UI's toggle button
+    // (ChainPlugin::run() only bothers feeding the detector while it's on);
+    // kParamTunerFrequency is output-only, the detected pitch in Hz (0 =
+    // no confident pitch right now), which the UI turns into a note name
+    // and cents offset for display.
+    kParamTunerOn,
+    kParamTunerFrequency,
+
+    // Amp Type - selects between the handful of EQ-and-saturation
+    // voicings defined in core/AmpBlock.hpp's kAmpVoicings (index 0,
+    // "Modern", reproduces AmpBlock's original fixed behavior exactly, so
+    // every preset/session saved before this parameter existed is
+    // unaffected). Lives in AmpBlock.hpp rather than here since it's a
+    // property of the Amp DSP block itself, reused as-is by the standalone
+    // 02-amp plugin too - not something specific to this chain plugin the
+    // way kSyncDivisions above is.
+    kParamAmpType,
+
     kParamCount
+};
+
+// Tempo-sync note divisions, shared between the DSP side (ChainPlugin.cpp,
+// which turns a division into an actual ms/Hz value from the host's BPM)
+// and the UI side (ChainUI.cpp, which shows the division's label on the
+// Sync knob) - same reasoning as kCabinetIRStateKey below. Index 0 ("Free")
+// means tempo sync is off; beatMultiplier is relative to a quarter note
+// (e.g. 0.5 = an eighth note), so `beatMs * beatMultiplier` gives the
+// synced time in milliseconds for any host BPM.
+struct SyncDivision
+{
+    const char* label;
+    float beatMultiplier;
+};
+
+static constexpr int kSyncDivisionCount = 8;
+static const SyncDivision kSyncDivisions[kSyncDivisionCount] =
+{
+    { "Free", 0.0f },
+    { "1/1",  4.0f },
+    { "1/2",  2.0f },
+    { "1/4",  1.0f },
+    { "1/8",  0.5f },
+    { "1/16", 0.25f },
+    { "1/8.", 0.75f },
+    { "1/8T", 1.0f / 3.0f },
 };
 
 // The DPF State key that carries the Cabinet block's loaded impulse-
@@ -140,5 +224,13 @@ enum Parameters
 // owner) and ChainUI.cpp (which requests/display it), the same way the
 // Parameters enum above is shared, so the two sides can't drift apart.
 static const char* const kCabinetIRStateKey = "cabinet_ir_path";
+
+// The DPF State key used to open a native "pick a file" dialog for
+// importing a preset (see ChainUI.cpp's importPresetsFromFile() and
+// handleControlBarClick()'s Import button). kStateIsOnlyForUI (see
+// ChainPlugin.cpp's initState()) keeps the picked path from ever being
+// persisted as part of the session - unlike the Cabinet IR above, it's a
+// one-shot action, not a lasting characteristic of the plugin instance.
+static const char* const kPresetImportStateKey = "preset_import_path";
 
 END_NAMESPACE_DISTRHO

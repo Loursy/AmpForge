@@ -13,6 +13,11 @@
  * sits in the chain - this is what EffectChain (core/EffectChain.hpp)
  * uses to decide processing order. Until we build the GUI, position
  * is set via plain automatable parameters from the host.
+ *
+ * Ahead of all 12 of those sits Input Gain: a fixed pre-chain trim,
+ * applied directly in run() rather than through an EffectChain slot,
+ * since (unlike every block above) it isn't reorderable and can't be
+ * turned off - see kParamInputGain's comment in ChainParameters.hpp.
  */
 
 #include "DistrhoPlugin.hpp"
@@ -31,20 +36,33 @@
 #include "TremoloBlock.hpp"
 #include "WahBlock.hpp"
 #include "EffectChain.hpp"
+#include "PitchDetector.hpp"
 #include <cmath>
 #include <cstring>
 #include <string>
+#include <chrono>
 
 START_NAMESPACE_DISTRHO
 
 // clang-format on
+
+// How long the Input Level meter's peak takes to fall back down between
+// hits, in ms - fast enough to track playing dynamics, slow enough not to
+// flicker illegibly on every sample. Same idea as NoiseGateBlock's release.
+static constexpr float kInputMeterDecayMs = 250.0f;
+
+// Time constant for the CPU Load meter's decay - see cpuLoad's comment
+// below. Slower than the Input Level meter's, since CPU spikes (a big
+// convolution block, a burst of denormals) are worth lingering on rather
+// than just tracking playing dynamics.
+static constexpr float kCpuMeterDecayTauSec = 0.5f;
 
 
 class ChainPlugin : public Plugin
 {
 public:
     ChainPlugin()
-        : Plugin(kParamCount, kProgramCount, 1) // 1 state: the Cabinet block's loaded IR file path
+        : Plugin(kParamCount, kProgramCount, 2) // states: Cabinet IR file path, preset-import file path
     {
         gateBlock.setThresholdDB(-50.0f);
         gateBlock.setAttackMs(5.0f);
@@ -138,6 +156,7 @@ public:
         // Calling it here with whatever sample rate the host reports at
         // construction time guarantees the buffers exist from sample one.
         const double initialSampleRate = getSampleRate();
+        updateInputLevelDecay(initialSampleRate);
         gateBlock.setSampleRate(initialSampleRate);
         compBlock.setSampleRate(initialSampleRate);
         wahBlock.setSampleRate(initialSampleRate);
@@ -150,6 +169,7 @@ public:
         tremoloBlock.setSampleRate(initialSampleRate);
         delayBlock.setSampleRate(initialSampleRate);
         reverbBlock.setSampleRate(initialSampleRate);
+        tunerDetector.setSampleRate(initialSampleRate);
     }
 
 protected:
@@ -192,6 +212,18 @@ protected:
         case kParamGateRange:
             parameter.name = "Gate Range"; parameter.symbol = "gate_range"; parameter.unit = "dB";
             parameter.ranges.def = 40.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 80.0f;
+            break;
+
+        // --- Input (a fixed pre-chain trim, not one of the reorderable
+        // pedals - see ChainParameters.hpp's comment on kParamInputGain) ---
+        case kParamInputGain:
+            parameter.name = "Input Gain"; parameter.symbol = "input_gain"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = -24.0f; parameter.ranges.max = 24.0f;
+            break;
+        case kParamInputLevel:
+            parameter.hints |= kParameterIsOutput;
+            parameter.name = "Input Level"; parameter.symbol = "input_level";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
             break;
 
         // --- Compressor ---
@@ -516,6 +548,46 @@ protected:
             parameter.name = "Reverb Bypass"; parameter.symbol = "reverb_bypass";
             parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
             break;
+
+        // --- Tempo sync (see ChainParameters.hpp's kSyncDivisions) ---
+        case kParamDelaySync:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Delay Sync"; parameter.symbol = "delay_sync";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = float(kSyncDivisionCount - 1);
+            break;
+        case kParamTremoloSync:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Tremolo Sync"; parameter.symbol = "tremolo_sync";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = float(kSyncDivisionCount - 1);
+            break;
+        case kParamChorusSync:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Chorus Sync"; parameter.symbol = "chorus_sync";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = float(kSyncDivisionCount - 1);
+            break;
+
+        case kParamCpuLoad:
+            parameter.hints |= kParameterIsOutput;
+            parameter.name = "CPU Load"; parameter.symbol = "cpu_load";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
+        case kParamTunerOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Tuner On"; parameter.symbol = "tuner_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamTunerFrequency:
+            parameter.hints |= kParameterIsOutput;
+            parameter.name = "Tuner Frequency"; parameter.symbol = "tuner_frequency"; parameter.unit = "Hz";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 2000.0f;
+            break;
+
+        case kParamAmpType:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Amp Type"; parameter.symbol = "amp_type";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = float(ampforge::kAmpVoicingCount - 1);
+            break;
         }
     }
 
@@ -529,6 +601,9 @@ protected:
         case kParamGateAttack:     return gateAttack;
         case kParamGateRelease:    return gateRelease;
         case kParamGateRange:      return gateRange;
+
+        case kParamInputGain:      return inputGain;
+        case kParamInputLevel:     return inputLevel;
 
         case kParamCompOn:         return compOn ? 1.0f : 0.0f;
         case kParamCompPosition:   return compPosition;
@@ -608,6 +683,17 @@ protected:
         case kParamDelayBypass:       return delayBypass ? 1.0f : 0.0f;
         case kParamReverbBypass:      return reverbBypass ? 1.0f : 0.0f;
 
+        case kParamDelaySync:         return delaySync;
+        case kParamTremoloSync:       return tremoloSync;
+        case kParamChorusSync:        return chorusSync;
+
+        case kParamCpuLoad:           return cpuLoad;
+
+        case kParamTunerOn:           return tunerOn ? 1.0f : 0.0f;
+        case kParamTunerFrequency:    return tunerFrequency;
+
+        case kParamAmpType:           return ampType;
+
         default: return 0.0f;
         }
     }
@@ -628,6 +714,10 @@ protected:
             gateRelease = value; gateBlock.setReleaseMs(value); break;
         case kParamGateRange:
             gateRange = value; gateBlock.setRangeDB(value); break;
+
+        case kParamInputGain:
+            inputGain = value; inputGainLinear = std::pow(10.0f, value / 20.0f); break;
+        // kParamInputLevel is output-only - the host never calls setParameterValue() for it.
 
         case kParamCompOn:
             compOn = value > 0.5f; chain.setEnabled(&compBlock, compOn && !compBypass); break;
@@ -772,11 +862,43 @@ protected:
             delayBypass = value > 0.5f; chain.setEnabled(&delayBlock, delayOn && !delayBypass); break;
         case kParamReverbBypass:
             reverbBypass = value > 0.5f; chain.setEnabled(&reverbBlock, reverbOn && !reverbBypass); break;
+
+        // Switching a Sync knob back to "Free" (index 0) restores that
+        // block's own Time/Rate value immediately, instead of leaving it
+        // stuck on whatever the synced value happened to be until the
+        // user next touches the knob - see applyTempoSync()'s comment.
+        case kParamDelaySync:
+            delaySync = value;
+            if (static_cast<int>(std::round(value)) == 0)
+                delayBlock.setDelayTimeMs(delayTime);
+            break;
+        case kParamTremoloSync:
+            tremoloSync = value;
+            if (static_cast<int>(std::round(value)) == 0)
+                tremoloBlock.setRateHz(tremoloRate);
+            break;
+        case kParamChorusSync:
+            chorusSync = value;
+            if (static_cast<int>(std::round(value)) == 0)
+                chorusBlock.setRateHz(chorusRate);
+            break;
+
+        case kParamTunerOn:
+            tunerOn = value > 0.5f;
+            if (!tunerOn)
+                tunerFrequency = 0.0f; // don't leave a stale reading once the tuner's turned off
+            break;
+
+        case kParamAmpType:
+            ampType = value;
+            ampBlock.setAmpType(static_cast<int>(std::round(value)));
+            break;
         }
     }
 
     void sampleRateChanged(double newSampleRate) override
     {
+        updateInputLevelDecay(newSampleRate);
         gateBlock.setSampleRate(newSampleRate);
         compBlock.setSampleRate(newSampleRate);
         wahBlock.setSampleRate(newSampleRate);
@@ -789,6 +911,7 @@ protected:
         tremoloBlock.setSampleRate(newSampleRate);
         delayBlock.setSampleRate(newSampleRate);
         reverbBlock.setSampleRate(newSampleRate);
+        tunerDetector.setSampleRate(newSampleRate);
 
         // The Cabinet block resamples its IR to whatever sample rate was
         // active at load time - if the rate changes later (e.g. the user
@@ -828,14 +951,26 @@ protected:
     // support it to offer their own native file picker for this state.
     void initState(uint32_t index, State& state) override
     {
-        if (index != 0)
-            return;
-
-        state.key = kCabinetIRStateKey;
-        state.label = "Cabinet IR File";
-        state.description = "WAV impulse response file loaded into the Cabinet block's convolution engine.";
-        state.hints = kStateIsFilenamePath;
-        state.defaultValue = "";
+        if (index == 0)
+        {
+            state.key = kCabinetIRStateKey;
+            state.label = "Cabinet IR File";
+            state.description = "WAV impulse response file loaded into the Cabinet block's convolution engine.";
+            state.hints = kStateIsFilenamePath;
+            state.defaultValue = "";
+        }
+        else if (index == 1)
+        {
+            // See kPresetImportStateKey's comment in ChainParameters.hpp -
+            // this state only exists to get requestStateFile()'s native
+            // file dialog; the DSP side never reads or persists its value,
+            // ChainUI::stateChanged() does all the actual import work.
+            state.key = kPresetImportStateKey;
+            state.label = "Import Preset File";
+            state.description = "A preset file (as written by AmpForge's own Export) to import.";
+            state.hints = kStateIsFilenamePath | kStateIsOnlyForUI;
+            state.defaultValue = "";
+        }
     }
 
     // Called by the host when it wants to persist our state (saving a
@@ -863,14 +998,100 @@ protected:
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
+        const auto processStart = std::chrono::steady_clock::now();
+
+        if (delaySync > 0.5f || tremoloSync > 0.5f || chorusSync > 0.5f)
+            applyTempoSync();
+
         const float* in  = inputs[0];
         float*       out = outputs[0];
 
         for (uint32_t i = 0; i < frames; ++i)
-            out[i] = chain.processSample(in[i]);
+        {
+            const float trimmed = in[i] * inputGainLinear;
+
+            // Peak with slow decay (see kInputMeterDecayMs) rather than an
+            // instant follow, so the Input Level meter reads like a real
+            // peak meter instead of flickering with every sample. Clamped
+            // to 1.0 - a hair over 0dBFS is still "clipping" either way, and
+            // keeping the reported value within the parameter's declared
+            // 0..1 range avoids surprising hosts that assume output
+            // parameters stay within their min/max.
+            const float rectified = std::min(std::fabs(trimmed), 1.0f);
+            inputLevel = (rectified > inputLevel) ? rectified : inputLevel * inputLevelDecay;
+
+            // Tuner tap: a copy of the trimmed-but-unprocessed signal, so
+            // the reading reflects the guitar's actual pitch regardless of
+            // what Distortion/Wah/etc. are doing further down the chain -
+            // see kParamTunerOn's comment in ChainParameters.hpp. Only fed
+            // while the tuner is actually open, so it costs nothing the
+            // rest of the time.
+            if (tunerOn)
+                tunerDetector.pushSample(trimmed);
+
+            out[i] = chain.processSample(trimmed);
+        }
+
+        if (tunerOn)
+            tunerFrequency = tunerDetector.getFrequencyHz();
+
+        // CPU Load: how much of this block's real-time budget (frames /
+        // sample rate) actually processing it took. Peak-with-decay like
+        // Input Level above, but the decay factor is derived here rather
+        // than precomputed, since it depends on this call's block size,
+        // which hosts are free to vary from call to call (unlike the
+        // sample rate, which sampleRateChanged() tells us about up front).
+        const float elapsedSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - processStart).count();
+        const float blockSec = static_cast<float>(frames) / static_cast<float>(getSampleRate());
+        const float rawLoad = std::min(elapsedSec / blockSec, 1.0f);
+        const float cpuLoadDecay = std::exp(-blockSec / kCpuMeterDecayTauSec);
+        cpuLoad = (rawLoad > cpuLoad) ? rawLoad : cpuLoad * cpuLoadDecay;
     }
 
 private:
+    void updateInputLevelDecay(double sampleRate)
+    {
+        inputLevelDecay = std::exp(-1.0f / (0.001f * kInputMeterDecayMs * static_cast<float>(sampleRate)));
+    }
+
+    // Recomputes Delay/Tremolo/Chorus's actual time/rate from the host's
+    // current BPM for every block whose Sync knob isn't "Free" (index 0),
+    // overriding that block's own Time/Rate parameter for this run() call.
+    // Only called when at least one of the three is synced (see run()),
+    // since getTimePosition() and the division lookup are pointless
+    // overhead otherwise. Falls back to 120 BPM when the host doesn't
+    // report a valid tempo (e.g. transport stopped, or a plugin format
+    // that doesn't support TimePosition at all) so sync still produces a
+    // sensible, stable rate instead of a divide-by-zero.
+    void applyTempoSync()
+    {
+        const TimePosition& time = getTimePosition();
+        const double bpm = (time.bbt.valid && time.bbt.beatsPerMinute > 1.0) ? time.bbt.beatsPerMinute : 120.0;
+        const float beatMs = 60000.0f / static_cast<float>(bpm); // duration of one quarter note
+
+        const int delayDiv = std::clamp(static_cast<int>(std::round(delaySync)), 0, kSyncDivisionCount - 1);
+        if (delayDiv > 0)
+        {
+            const float ms = std::clamp(beatMs * kSyncDivisions[delayDiv].beatMultiplier, 10.0f, 1500.0f);
+            delayBlock.setDelayTimeMs(ms);
+        }
+
+        const int tremoloDiv = std::clamp(static_cast<int>(std::round(tremoloSync)), 0, kSyncDivisionCount - 1);
+        if (tremoloDiv > 0)
+        {
+            const float ms = beatMs * kSyncDivisions[tremoloDiv].beatMultiplier;
+            tremoloBlock.setRateHz(std::clamp(1000.0f / ms, 0.5f, 15.0f));
+        }
+
+        const int chorusDiv = std::clamp(static_cast<int>(std::round(chorusSync)), 0, kSyncDivisionCount - 1);
+        if (chorusDiv > 0)
+        {
+            const float ms = beatMs * kSyncDivisions[chorusDiv].beatMultiplier;
+            chorusBlock.setRateHz(std::clamp(1000.0f / ms, 0.05f, 5.0f));
+        }
+    }
+
+
     ampforge::NoiseGateBlock gateBlock;
     ampforge::CompressorBlock compBlock;
     ampforge::WahBlock wahBlock;
@@ -884,6 +1105,28 @@ private:
     ampforge::DelayBlock delayBlock;
     ampforge::ReverbBlock reverbBlock;
     ampforge::EffectChain chain;
+
+    // Input - applied directly in run(), ahead of the chain, rather than
+    // through an AudioBlock/EffectChain slot, since it's a fixed pre-stage
+    // rather than a reorderable pedal (see kParamInputGain's comment).
+    float inputGain = 0.0f, inputGainLinear = 1.0f;
+    float inputLevel = 0.0f;
+    float inputLevelDecay = 0.0f;
+
+    // CPU Load meter - see kParamCpuLoad's comment in ChainParameters.hpp.
+    // Same fast-attack/slow-decay shape as the Input Level meter above, so
+    // one expensive block still reads clearly instead of instantly falling
+    // back to near-zero on the very next (cheaper) block. Unlike
+    // inputLevelDecay, its decay factor can't be precomputed once from the
+    // sample rate - it depends on the block size too, which hosts are free
+    // to change from call to call - so it's recomputed in run() instead
+    // (see kCpuMeterDecayTauSec below).
+    float cpuLoad = 0.0f;
+
+    // Tuner - see kParamTunerOn's comment in ChainParameters.hpp.
+    bool tunerOn = false;
+    float tunerFrequency = 0.0f;
+    ampforge::PitchDetector tunerDetector;
 
     bool gateOn = false;
     float gatePosition = 0.0f, gateThreshold = -50.0f, gateAttack = 5.0f, gateRelease = 150.0f, gateRange = 40.0f;
@@ -907,18 +1150,22 @@ private:
     std::string cabinetIRPath;
 
     float ampPosition = 5.0f, ampDrive = 0.0f, ampBass = 0.0f, ampMid = 0.0f, ampTreble = 0.0f, ampVolume = 0.0f;
+    float ampType = 0.0f; // index into ampforge::kAmpVoicings; 0 = Modern
 
     bool chorusOn = false;
     float chorusPosition = 6.0f, chorusRate = 1.0f, chorusDepth = 5.0f, chorusMix = 0.5f;
+    float chorusSync = 0.0f; // index into kSyncDivisions; 0 = Free (off)
 
     bool phaserOn = false;
     float phaserPosition = 7.0f, phaserRate = 0.5f, phaserDepth = 0.7f, phaserMix = 0.5f;
 
     bool tremoloOn = false;
     float tremoloPosition = 8.0f, tremoloRate = 5.0f, tremoloDepth = 0.5f;
+    float tremoloSync = 0.0f; // index into kSyncDivisions; 0 = Free (off)
 
     bool delayOn = false;
     float delayPosition = 9.0f, delayTime = 300.0f, delayFeedback = 0.3f, delayMix = 0.3f;
+    float delaySync = 0.0f; // index into kSyncDivisions; 0 = Free (off)
 
     bool reverbOn = false;
     float reverbPosition = 10.0f, reverbRoomSize = 0.5f, reverbDamping = 0.5f, reverbMix = 0.3f;

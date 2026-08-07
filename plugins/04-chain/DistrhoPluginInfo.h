@@ -22,6 +22,10 @@
 #define DISTRHO_PLUGIN_NUM_INPUTS    1
 #define DISTRHO_PLUGIN_NUM_OUTPUTS   1
 #define DISTRHO_PLUGIN_WANT_PROGRAMS 1
+// Needed for Plugin::getTimePosition(), which Delay/Tremolo/Chorus's tempo
+// sync (see ChainParameters.hpp's kSyncDivisions) reads the host's BPM
+// from in ChainPlugin::run().
+#define DISTRHO_PLUGIN_WANT_TIMEPOS  1
 // State is used to carry the Cabinet block's loaded impulse-response file
 // path - not representable as a plain automatable float parameter, but
 // still needs to travel with the DAW session (see ChainPlugin.cpp's

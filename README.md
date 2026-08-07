@@ -1,12 +1,15 @@
 # AmpForge
 
-**A free, open-source guitar amp simulator plugin for Linux.**
+**A free, open-source guitar amp simulator plugin, developed on Linux
+and also cross-compiled for Windows.**
 
 AmpForge is a single plugin — not a chain of separate plugins bolted
 together in a DAW — that hosts a full, reorderable pedalboard-and-amp
-chain internally, in the spirit of Guitar Rig / BIAS FX. It ships as
-**VST3**, **LV2**, **CLAP**, and a **JACK/PipeWire standalone** app,
-all built from one codebase.
+chain internally, in the spirit of Guitar Rig / BIAS FX. On Linux it
+ships as **VST3**, **LV2**, **CLAP**, and a **JACK/PipeWire standalone**
+app, all built from one codebase; **VST3/LV2/CLAP for Windows** are
+built from that same codebase by cross-compiling with mingw-w64 (see
+[Building for Windows](#building-for-windows-cross-compile) below).
 
 Linux has never really had a good, free, actively-developed answer to
 Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
@@ -18,6 +21,20 @@ Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
   asymmetric-clipping second gain stage), Amp (always present),
   Cabinet (convolves with a loaded speaker-cab impulse response),
   Chorus, Phaser, Tremolo, Delay, Reverb.
+- **4 Amp Type voicings** (Modern, Vintage, Crunch, Hi-Gain) — distinct
+  EQ centers, headroom, and clip character per type; "Modern" is the
+  default and matches the Amp block's original fixed behavior exactly.
+- **Tempo-syncable Delay, Tremolo, and Chorus** — lock their time/rate
+  to the host's BPM (whole down to sixteenth notes, plus a couple of
+  dotted/triplet divisions) instead of only a free-running ms/Hz knob.
+- **Built-in tuner** — a standalone autocorrelation-based pitch
+  detector with a note-name-and-cents overlay, reading the signal
+  straight off the input so it's unaffected by whatever the pedalboard
+  is doing further down the chain.
+- **CPU load meter** in the top bar, especially handy once the Cabinet
+  block's convolution is in the chain.
+- **A/B compare** — snapshot the current chain into slot A or B and
+  flip between them instantly while dialing in a tone.
 - **Drag-and-drop pedalboard UI** — add pedals from a palette, drag
   them into the rack, reorder by dragging cards (other cards live-reflow
   around wherever you're about to drop it), real footswitch-style
@@ -29,19 +46,25 @@ Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
   (0–80dB), with hysteresis and a hold time so it doesn't choke a
   note's natural decay or chatter on signal hovering near the
   threshold.
-- **6 factory presets** (Fender Clean, Marshall Rock, Shredder Lead,
-  Metal Rhythm, Ambient Shoegaze, Funk Clean) plus **custom presets**
-  you can save, update, and delete from within the plugin.
+- **7 factory presets** (Chimey Clean, British Crunch, Shredder Lead,
+  Metal Rhythm, Ambient Shoegaze, Funk Clean, Blues Rock Sustain) plus
+  **custom presets** you can save, update, delete, and export/import as
+  files (to share a tone with someone else, or between machines) from
+  within the plugin.
 - **Every parameter is host-automatable**, with correct automation
   gesture handling (touch/undo work properly in your DAW) and proper
   boolean/integer/unit metadata for automation lanes.
 - Works as a **VST3**, **LV2**, or **CLAP** plugin in any compatible
-  host (Reaper, Carla, etc.), or as a **standalone JACK/PipeWire app**.
+  host on Linux or Windows (Reaper, Carla, etc.), or as a **standalone
+  JACK/PipeWire app** on Linux.
 
 ## Building from source
 
 There are no prebuilt binaries yet — you build it yourself. It's a
-standard CMake + Ninja project and only takes a few minutes.
+standard CMake + Ninja project and only takes a few minutes. This
+section covers the native Linux build; see [Building for Windows
+(cross-compile)](#building-for-windows-cross-compile) further down if
+you want the Windows VST3/CLAP/LV2 instead.
 
 ### 1. Install prerequisites
 
@@ -115,12 +138,70 @@ cp -r build/bin/ampforge_main.clap ~/.clap/
 ./build/bin/ampforge_main
 ```
 
+## Building for Windows (cross-compile)
+
+AmpForge doesn't need a Windows machine to build a Windows plugin -
+mingw-w64 cross-compiles VST3, CLAP, and LV2 straight from the same
+Linux checkout, into real PE32+ Windows binaries.
+
+### 1. Install the mingw-w64 toolchain
+
+**Arch / CachyOS / Manjaro:**
+
+```bash
+sudo pacman -S --needed mingw-w64-gcc mingw-w64-binutils \
+    mingw-w64-headers mingw-w64-crt mingw-w64-winpthreads
+```
+
+**Debian / Ubuntu:**
+
+```bash
+sudo apt install mingw-w64
+```
+
+### 2. Configure and build
+
+Use a separate build directory and point `CMAKE_TOOLCHAIN_FILE` at
+`cmake/toolchain-mingw64.cmake` (included in this repo):
+
+```bash
+mkdir build-windows && cd build-windows
+cmake .. -G Ninja \
+    -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-mingw64.cmake \
+    -DCMAKE_BUILD_TYPE=Release
+ninja ampforge_main-vst3 ampforge_main.clap ampforge_main-lv2
+```
+
+The output lands in `build-windows/bin/`, in the same
+`ampforge_main.vst3` / `ampforge_main.clap` / `ampforge_main.lv2`
+layout as the Linux build, just with `.dll`-based Windows binaries
+inside instead of `.so`.
+
+The standalone (`ampforge_main-jack`) target isn't part of this list -
+it needs a Windows-native SDL2/audio-backend build that isn't set up
+in this cross-compile path yet (see [Project status](#project-status)).
+VST3/CLAP/LV2 inside a DAW don't need it.
+
+### 3. Install on Windows
+
+Copy the built folders/files to wherever your host looks for plugins,
+e.g.:
+
+- **VST3**: `%COMMONPROGRAMFILES%\VST3\` (typically
+  `C:\Program Files\Common Files\VST3\`)
+- **CLAP**: `%COMMONPROGRAMFILES%\CLAP\` (typically
+  `C:\Program Files\Common Files\CLAP\`)
+- **LV2**: `%APPDATA%\LV2\` for a per-user install, or check your LV2
+  host's own documentation for its scan paths
+
+Rescan plugins in your host afterward, the same as on Linux.
+
 ## Using it
 
 - **In Reaper**: add it from the FX browser like any other VST3 or CLAP
   plugin — it shows up as "AmpForge". Automate any knob, switch, or the
   pedal Position parameters directly from Reaper's automation lanes; the
-  6 factory presets are also available from Reaper's own plugin preset
+  7 factory presets are also available from Reaper's own plugin preset
   dropdown.
 - **In Carla / other LV2 hosts**: add it as an LV2 plugin named
   "AmpForge".
@@ -169,6 +250,14 @@ Known gaps, tracked for future work:
   enough for a single instance at the IR lengths a speaker cab actually
   needs (capped at 4096 samples), but a future optimization opportunity
   if that ever changes.
+- The Windows cross-compile only covers VST3/CLAP/LV2 - the standalone
+  app pulls in SDL2/RtAudio for its audio backend, and cross-compiling
+  those against mingw-w64 isn't set up yet, so there's no Windows
+  standalone `.exe` for now (VST3/CLAP/LV2 inside a DAW cover the
+  overwhelming majority of Windows use anyway).
+- No CI/release pipeline yet - Windows binaries are built locally by
+  hand via the cross-compile steps above, not published as downloadable
+  releases.
 
 ## Contributing
 

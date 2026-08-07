@@ -40,7 +40,7 @@ START_NAMESPACE_DISTRHO
 // boost/tone-shaper, and none of the output-level knobs (Screamer/
 // Distortion Level, Amp Volume) stack positive dB on top of each other,
 // since nothing downstream clips an overs signal for us.
-static constexpr uint32_t kProgramCount = 6;
+static constexpr uint32_t kProgramCount = 7;
 
 struct PresetDefinition
 {
@@ -51,13 +51,14 @@ struct PresetDefinition
 // clang-format off
 static const PresetDefinition kPresets[kProgramCount] =
 {
-    // "Fender Clean" - Amp Drive at 0dB (unity gain into the tanh stage,
+    // "Chimey Clean" - Amp Drive at 0dB (unity gain into the tanh stage,
     // so it stays clean regardless of how hot the input is), gentle
     // compression for sustain, a scooped-mid/chimey-treble EQ, a touch of
     // vibrato (tremolo) and a subtle spring-like reverb - the classic
-    // clean American amp sound.
+    // clean American amp sound. (Named for the tone, not a brand - the
+    // Amp block is a generic saturator/EQ, not a modeled Fender circuit.)
     {
-        "Fender Clean",
+        "Chimey Clean",
         {
             /* Gate       on,pos,thr,atk,rel      */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
             /* Comp       on,pos,thr,ratio,atk,rel,makeup */ 1.0f, 1.0f, -22.0f, 2.5f, 8.0f, 100.0f, 1.0f,
@@ -73,15 +74,18 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    on,pos,mix,level,bypass */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
+            /* Input Gain */ 0.0f,
         }
     },
 
-    // "Marshall Rock" - a modest Screamer boost (just enough to push the
+    // "British Crunch" - a modest Screamer boost (just enough to push the
     // amp, not clip on its own) into a hot, mid-forward Amp Drive that
     // does the actual saturating - classic cranked-British-stack rhythm/
-    // lead tone, with a touch of room reverb.
+    // lead tone, with a touch of room reverb. (Named for the tone, not a
+    // brand - the Amp block is a generic saturator/EQ, not a modeled
+    // Marshall circuit.)
     {
-        "Marshall Rock",
+        "British Crunch",
         {
             /* Gate       */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
             /* Comp       */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
@@ -97,6 +101,7 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
+            /* Input Gain */ 0.0f,
         }
     },
 
@@ -125,6 +130,7 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
+            /* Input Gain */ 0.0f,
         }
     },
 
@@ -150,6 +156,7 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Distortion on,pos,drive,tone,level,bypass */ 1.0f, 4.0f, 12.0f, 0.3f, -3.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 60.0f,
+            /* Input Gain */ 0.0f,
         }
     },
 
@@ -173,6 +180,7 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
+            /* Input Gain */ 0.0f,
         }
     },
 
@@ -197,6 +205,38 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
+            /* Input Gain */ 0.0f,
+        }
+    },
+
+    // "Blues Rock Sustain" - the singing, endless-sustain blues-rock lead
+    // tone (think Gary Moore's "Parisienne Walkways"): a light Screamer
+    // boost pushes a hot, heavily mid-forward Amp Drive (mid is what
+    // makes a lead "sing" and cut through rather than just distort), a
+    // low-threshold/slow-release Comp keeps notes blooming instead of
+    // decaying, and a plate-style reverb plus a low, subtle delay give it
+    // space without smearing bends and vibrato. No Distortion stage - the
+    // Amp's smooth tanh saturation is what carries the sustain, same
+    // reasoning as "Shredder Lead" above, just tuned for long, vocal
+    // notes instead of fast picking.
+    {
+        "Blues Rock Sustain",
+        {
+            /* Gate       */ 1.0f, 0.0f, -45.0f, 3.0f, 120.0f,
+            /* Comp       */ 1.0f, 1.0f, -28.0f, 4.0f, 5.0f, 200.0f, 3.0f,
+            /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
+            /* Screamer   */ 1.0f, 3.0f, 3.0f, 0.55f, 3.0f,
+            /* Amp        */ 5.0f, 25.0f, 3.0f, 7.0f, 2.0f, 0.0f,
+            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
+            /* Delay      */ 1.0f, 10.0f, 380.0f, 0.2f, 0.15f,
+            /* Reverb     */ 1.0f, 11.0f, 0.5f, 0.4f, 0.25f,
+            /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
+            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
+            /* Gate Range */ 45.0f,
+            /* Input Gain */ 0.0f,
         }
     },
 };
