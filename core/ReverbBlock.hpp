@@ -1,5 +1,6 @@
 #pragma once
 #include "AudioBlock.hpp"
+#include "Denormal.hpp"
 #include <vector>
 #include <array>
 #include <cmath>
@@ -50,10 +51,12 @@ public:
         const float output = buffer[index];
 
         // One-pole lowpass in the feedback path - this is what makes
-        // high frequencies die out faster than low ones.
-        filterStore = output * (1.0f - damping) + filterStore * damping;
+        // high frequencies die out faster than low ones. Both recirculating
+        // values are flushed so a decaying tail can't leave them stuck as
+        // denormals (see Denormal.hpp).
+        filterStore = flushDenormal(output * (1.0f - damping) + filterStore * damping);
 
-        buffer[index] = input + filterStore * feedback;
+        buffer[index] = flushDenormal(input + filterStore * feedback);
         index = (index + 1) % buffer.size();
 
         return output;
@@ -86,7 +89,7 @@ public:
 
         const float bufOut = buffer[index];
         const float output = -input + bufOut;
-        buffer[index] = input + bufOut * feedback;
+        buffer[index] = flushDenormal(input + bufOut * feedback);
         index = (index + 1) % buffer.size();
         return output;
     }

@@ -1,5 +1,6 @@
 #pragma once
 #include "AudioBlock.hpp"
+#include "Denormal.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -40,11 +41,13 @@ public:
     {
         const float inputLevel = std::fabs(input);
 
-        // Envelope follower: rises quickly (attack), falls slowly (release)
+        // Envelope follower: rises quickly (attack), falls slowly (release).
+        // Flushed so it can't get stuck decaying through denormals during a
+        // quiet passage (see Denormal.hpp).
         if (inputLevel > envelope)
-            envelope = attackCoeff * envelope + (1.0f - attackCoeff) * inputLevel;
+            envelope = flushDenormal(attackCoeff * envelope + (1.0f - attackCoeff) * inputLevel);
         else
-            envelope = releaseCoeff * envelope + (1.0f - releaseCoeff) * inputLevel;
+            envelope = flushDenormal(releaseCoeff * envelope + (1.0f - releaseCoeff) * inputLevel);
 
         const float envelopeDB = 20.0f * std::log10(std::max(envelope, 1e-6f));
 

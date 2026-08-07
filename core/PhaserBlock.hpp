@@ -1,5 +1,6 @@
 #pragma once
 #include "AudioBlock.hpp"
+#include "Denormal.hpp"
 #include <array>
 #include <cmath>
 #include <algorithm>
@@ -33,7 +34,9 @@ public:
     {
         const float output = coeff * input + previousInput - coeff * previousOutput;
         previousInput = input;
-        previousOutput = output;
+        // Flushed so the allpass's ring-down after the input goes silent
+        // can't leave it stuck as a denormal (see Denormal.hpp).
+        previousOutput = flushDenormal(output);
         return output;
     }
 

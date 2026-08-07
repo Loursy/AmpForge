@@ -1,5 +1,6 @@
 #pragma once
 #include "AudioBlock.hpp"
+#include "Denormal.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -33,10 +34,12 @@ public:
     {
         const float inputLevel = std::fabs(input);
 
+        // Both smoothed values are flushed so they can't get stuck decaying
+        // through denormals once the gate closes on silence (see Denormal.hpp).
         if (inputLevel > envelope)
-            envelope = attackCoeff * envelope + (1.0f - attackCoeff) * inputLevel;
+            envelope = flushDenormal(attackCoeff * envelope + (1.0f - attackCoeff) * inputLevel);
         else
-            envelope = releaseCoeff * envelope + (1.0f - releaseCoeff) * inputLevel;
+            envelope = flushDenormal(releaseCoeff * envelope + (1.0f - releaseCoeff) * inputLevel);
 
         const float envelopeDB = 20.0f * std::log10(std::max(envelope, 1e-6f));
 
@@ -44,7 +47,7 @@ public:
         const float targetGain = (envelopeDB > thresholdDB) ? 1.0f : 0.0f;
 
         // Smooth the gain itself too, so the gate doesn't click open/closed
-        gateGain = gateGain + (targetGain - gateGain) * gateSmoothingCoeff;
+        gateGain = flushDenormal(gateGain + (targetGain - gateGain) * gateSmoothingCoeff);
 
         return input * gateGain;
     }

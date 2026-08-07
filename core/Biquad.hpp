@@ -1,4 +1,5 @@
 #pragma once
+#include "Denormal.hpp"
 #include <cmath>
 
 /*
@@ -82,7 +83,9 @@ public:
     {
         const float y = c_b0*x + c_b1*x1 + c_b2*x2 - c_a1*y1 - c_a2*y2;
         x2 = x1; x1 = x;
-        y2 = y1; y1 = y;
+        // Flushed so the filter's ring-down after the input goes silent
+        // can't leave y1/y2 stuck as denormals (see Denormal.hpp).
+        y2 = y1; y1 = flushDenormal(y);
         return y;
     }
 

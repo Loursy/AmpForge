@@ -1,5 +1,6 @@
 #pragma once
 #include "AudioBlock.hpp"
+#include "Denormal.hpp"
 #include <vector>
 #include <cmath>
 #include <algorithm>
@@ -62,8 +63,9 @@ public:
         const float delayedSample = buffer[readIndex0] * (1.0f - frac) + buffer[readIndex1] * frac;
 
         // Write input + feedback portion of the delayed signal, so echoes
-        // repeat and decay over time.
-        buffer[writeIndex] = input + delayedSample * feedback;
+        // repeat and decay over time. Flushed to guard against denormals
+        // once the echoes decay toward silence (see Denormal.hpp).
+        buffer[writeIndex] = flushDenormal(input + delayedSample * feedback);
 
         writeIndex = (writeIndex + 1) % bufferSize;
 

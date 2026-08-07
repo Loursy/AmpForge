@@ -7,7 +7,7 @@
 // internal signal chain.
 #define DISTRHO_PLUGIN_BRAND   "AmpForge"
 #define DISTRHO_PLUGIN_NAME    "AmpForge"
-#define DISTRHO_PLUGIN_URI     "https://github.com/atakan/ampforge"
+#define DISTRHO_PLUGIN_URI     "https://github.com/Loursy/ampforge"
 #define DISTRHO_PLUGIN_CLAP_ID "com.ampforge.main"
 
 #define DISTRHO_PLUGIN_BRAND_ID  Ampf
