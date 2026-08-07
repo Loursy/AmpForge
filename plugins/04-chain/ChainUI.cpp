@@ -196,6 +196,25 @@ static const PedalDef kPedalDefs[] =
 static constexpr int kPedalDefCount = sizeof(kPedalDefs) / sizeof(kPedalDefs[0]);
 static constexpr int kAmpPedalIndex = 4;
 
+// The palette lists pedals in recommended signal-chain order (matching
+// where they actually land in the rack via defaultPosition), not in
+// kPedalDefs's own array order - new pedal types get appended at the end
+// of that array to keep existing indices stable (see PedalDef's comment
+// above), which would otherwise leave them looking randomly tacked on at
+// the bottom of the palette instead of near where they belong tonally.
+static const std::vector<int> kPaletteOrder = []()
+{
+    std::vector<int> order;
+    for (int i = 0; i < kPedalDefCount; ++i)
+        if (i != kAmpPedalIndex)
+            order.push_back(i);
+    std::sort(order.begin(), order.end(), [](int a, int b)
+    {
+        return kPedalDefs[a].defaultPosition < kPedalDefs[b].defaultPosition;
+    });
+    return order;
+}();
+
 // A blank starting point for "+ New Preset" - only Amp present, flat
 // and neutral, everything else off the board.
 // clang-format off
@@ -489,14 +508,12 @@ protected:
         // --- Palette: press-and-hold starts a potential drag ---
         if (mx < kPaletteWidth && my > kTopBarHeight + kControlBarHeight)
         {
-            for (int i = 0; i < kPedalDefCount; ++i)
+            for (size_t row = 0; row < kPaletteOrder.size(); ++row)
             {
-                if (i == kAmpPedalIndex)
-                    continue;
-                const float itemY = kRackTop + i * kPaletteItemH;
+                const float itemY = kRackTop + static_cast<float>(row) * kPaletteItemH;
                 if (my >= itemY && my < itemY + kPaletteItemH)
                 {
-                    paletteDraggingPedal = i;
+                    paletteDraggingPedal = kPaletteOrder[row];
                     paletteDragMoved = false;
                     paletteDragStartX = mx;
                     paletteDragStartY = my;
@@ -1560,12 +1577,10 @@ private:
         fill();
         closePath();
 
-        for (int i = 0; i < kPedalDefCount; ++i)
+        for (size_t row = 0; row < kPaletteOrder.size(); ++row)
         {
-            if (i == kAmpPedalIndex)
-                continue;
-
-            const float itemY = kRackTop + i * kPaletteItemH;
+            const int i = kPaletteOrder[row];
+            const float itemY = kRackTop + static_cast<float>(row) * kPaletteItemH;
             const Color& accent = kPedalDefs[i].accent;
             const bool isActive = paramValues[kPedalDefs[i].onParam] > 0.5f;
             const bool isBeingDragged = (i == paletteDraggingPedal && paletteDragMoved);
