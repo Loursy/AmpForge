@@ -101,6 +101,18 @@ enum Parameters
     kParamDelayBypass,
     kParamReverbBypass,
 
+    // Distortion - added after the original parameter set (including the
+    // bypass block above) so every existing parameter index, and every
+    // already-saved preset/session, keeps working unchanged. A harder,
+    // more aggressive second gain stage alongside Screamer's overdrive -
+    // see core/DistortionBlock.hpp.
+    kParamDistortionOn,
+    kParamDistortionPosition,
+    kParamDistortionDrive,
+    kParamDistortionTone,
+    kParamDistortionLevel,
+    kParamDistortionBypass,
+
     kParamCount
 };
 

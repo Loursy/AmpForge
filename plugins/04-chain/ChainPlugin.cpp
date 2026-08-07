@@ -5,8 +5,9 @@
  * reorderable chain of 10 modules, the way Guitar Rig / BIAS FX work.
  *
  * Default chain order (a typical pedalboard layout):
- *   0: Noise Gate  1: Compressor  2: Wah  3: Screamer  4: Amp
- *   5: Chorus      6: Phaser      7: Tremolo  8: Delay  9: Reverb
+ *   0: Noise Gate  1: Compressor  2: Wah       3: Screamer  4: Distortion
+ *   5: Amp         6: Chorus      7: Phaser    8: Tremolo   9: Delay
+ *   10: Reverb
  *
  * Every block has a "Position" parameter (0-9) controlling where it
  * sits in the chain - this is what EffectChain (core/EffectChain.hpp)
@@ -18,6 +19,7 @@
 #include "ChainParameters.hpp"
 #include "ChainPresets.hpp"
 #include "ScreamerBlock.hpp"
+#include "DistortionBlock.hpp"
 #include "AmpBlock.hpp"
 #include "DelayBlock.hpp"
 #include "ReverbBlock.hpp"
@@ -58,6 +60,10 @@ public:
         screamerBlock.setTone(0.5f);
         screamerBlock.setLevel(0.0f);
 
+        distortionBlock.setDrive(4.0f);
+        distortionBlock.setTone(0.5f);
+        distortionBlock.setLevel(0.0f);
+
         ampBlock.setDriveDB(0.0f);
         ampBlock.setBassDB(0.0f);
         ampBlock.setMidDB(0.0f);
@@ -84,18 +90,20 @@ public:
         reverbBlock.setMix(0.3f);
 
         // Default pedalboard order:
-        // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Amp(4) ->
-        // Chorus(5) -> Phaser(6) -> Tremolo(7) -> Delay(8) -> Reverb(9)
+        // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Distortion(4) ->
+        // Amp(5) -> Chorus(6) -> Phaser(7) -> Tremolo(8) -> Delay(9) ->
+        // Reverb(10)
         chain.addBlock(&gateBlock, 0);
         chain.addBlock(&compBlock, 1);
         chain.addBlock(&wahBlock, 2);
         chain.addBlock(&screamerBlock, 3);
-        chain.addBlock(&ampBlock, 4);
-        chain.addBlock(&chorusBlock, 5);
-        chain.addBlock(&phaserBlock, 6);
-        chain.addBlock(&tremoloBlock, 7);
-        chain.addBlock(&delayBlock, 8);
-        chain.addBlock(&reverbBlock, 9);
+        chain.addBlock(&distortionBlock, 4);
+        chain.addBlock(&ampBlock, 5);
+        chain.addBlock(&chorusBlock, 6);
+        chain.addBlock(&phaserBlock, 7);
+        chain.addBlock(&tremoloBlock, 8);
+        chain.addBlock(&delayBlock, 9);
+        chain.addBlock(&reverbBlock, 10);
         chain.rebuildOrder();
 
         // Amp is always part of the signal path.
@@ -107,6 +115,7 @@ public:
         chain.setEnabled(&compBlock, false);
         chain.setEnabled(&wahBlock, false);
         chain.setEnabled(&screamerBlock, true);
+        chain.setEnabled(&distortionBlock, false);
         chain.setEnabled(&chorusBlock, false);
         chain.setEnabled(&phaserBlock, false);
         chain.setEnabled(&tremoloBlock, false);
@@ -124,6 +133,7 @@ public:
         compBlock.setSampleRate(initialSampleRate);
         wahBlock.setSampleRate(initialSampleRate);
         screamerBlock.setSampleRate(initialSampleRate);
+        distortionBlock.setSampleRate(initialSampleRate);
         ampBlock.setSampleRate(initialSampleRate);
         chorusBlock.setSampleRate(initialSampleRate);
         phaserBlock.setSampleRate(initialSampleRate);
@@ -155,7 +165,7 @@ protected:
         case kParamGatePosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Gate Position"; parameter.symbol = "gate_position";
-            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamGateThreshold:
             parameter.name = "Gate Threshold"; parameter.symbol = "gate_threshold"; parameter.unit = "dB";
@@ -179,7 +189,7 @@ protected:
         case kParamCompPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Compressor Position"; parameter.symbol = "comp_position";
-            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamCompThreshold:
             parameter.name = "Compressor Threshold"; parameter.symbol = "comp_threshold"; parameter.unit = "dB";
@@ -211,7 +221,7 @@ protected:
         case kParamWahPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Wah Chain Position"; parameter.symbol = "wah_chain_position";
-            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamWahPedal:
             parameter.name = "Wah Pedal"; parameter.symbol = "wah_pedal";
@@ -231,7 +241,7 @@ protected:
         case kParamScreamerPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Screamer Position"; parameter.symbol = "screamer_position";
-            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamScreamerDrive:
             parameter.name = "Screamer Drive"; parameter.symbol = "screamer_drive"; parameter.unit = "x";
@@ -246,11 +256,41 @@ protected:
             parameter.ranges.def = 0.0f; parameter.ranges.min = -24.0f; parameter.ranges.max = 12.0f;
             break;
 
+        // --- Distortion (a harder, more aggressive second gain stage
+        // alongside Screamer's overdrive - see core/DistortionBlock.hpp) ---
+        case kParamDistortionOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Distortion On"; parameter.symbol = "distortion_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamDistortionPosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Distortion Position"; parameter.symbol = "distortion_position";
+            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            break;
+        case kParamDistortionDrive:
+            parameter.name = "Distortion Drive"; parameter.symbol = "distortion_drive"; parameter.unit = "x";
+            parameter.ranges.def = 4.0f; parameter.ranges.min = 1.0f; parameter.ranges.max = 30.0f;
+            break;
+        case kParamDistortionTone:
+            parameter.name = "Distortion Tone"; parameter.symbol = "distortion_tone";
+            parameter.ranges.def = 0.5f; parameter.ranges.min = 0.05f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamDistortionLevel:
+            parameter.name = "Distortion Level"; parameter.symbol = "distortion_level"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = -24.0f; parameter.ranges.max = 12.0f;
+            break;
+        case kParamDistortionBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Distortion Bypass"; parameter.symbol = "distortion_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
         // --- Amp ---
         case kParamAmpPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Amp Position"; parameter.symbol = "amp_position";
-            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamAmpDrive:
             parameter.name = "Amp Drive"; parameter.symbol = "amp_drive"; parameter.unit = "dB";
@@ -282,7 +322,7 @@ protected:
         case kParamChorusPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Chorus Position"; parameter.symbol = "chorus_position";
-            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamChorusRate:
             parameter.name = "Chorus Rate"; parameter.symbol = "chorus_rate"; parameter.unit = "Hz";
@@ -306,7 +346,7 @@ protected:
         case kParamPhaserPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Phaser Position"; parameter.symbol = "phaser_position";
-            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamPhaserRate:
             parameter.name = "Phaser Rate"; parameter.symbol = "phaser_rate"; parameter.unit = "Hz";
@@ -330,7 +370,7 @@ protected:
         case kParamTremoloPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Tremolo Position"; parameter.symbol = "tremolo_position";
-            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamTremoloRate:
             parameter.name = "Tremolo Rate"; parameter.symbol = "tremolo_rate"; parameter.unit = "Hz";
@@ -350,7 +390,7 @@ protected:
         case kParamDelayPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Delay Position"; parameter.symbol = "delay_position";
-            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamDelayTime:
             parameter.name = "Delay Time"; parameter.symbol = "delay_time"; parameter.unit = "ms";
@@ -374,7 +414,7 @@ protected:
         case kParamReverbPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Reverb Position"; parameter.symbol = "reverb_position";
-            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 9.0f;
+            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
             break;
         case kParamReverbRoomSize:
             parameter.name = "Reverb Room Size"; parameter.symbol = "reverb_room_size";
@@ -466,6 +506,13 @@ protected:
         case kParamScreamerDrive:    return screamerDrive;
         case kParamScreamerTone:     return screamerTone;
         case kParamScreamerLevel:    return screamerLevel;
+
+        case kParamDistortionOn:       return distortionOn ? 1.0f : 0.0f;
+        case kParamDistortionPosition: return distortionPosition;
+        case kParamDistortionDrive:    return distortionDrive;
+        case kParamDistortionTone:     return distortionTone;
+        case kParamDistortionLevel:    return distortionLevel;
+        case kParamDistortionBypass:   return distortionBypass ? 1.0f : 0.0f;
 
         case kParamAmpPosition:      return ampPosition;
         case kParamAmpDrive:         return ampDrive;
@@ -567,6 +614,19 @@ protected:
         case kParamScreamerLevel:
             screamerLevel = value; screamerBlock.setLevel(value); break;
 
+        case kParamDistortionOn:
+            distortionOn = value > 0.5f; chain.setEnabled(&distortionBlock, distortionOn && !distortionBypass); break;
+        case kParamDistortionPosition:
+            distortionPosition = value; chain.setPosition(&distortionBlock, static_cast<int>(std::round(value))); break;
+        case kParamDistortionDrive:
+            distortionDrive = value; distortionBlock.setDrive(value); break;
+        case kParamDistortionTone:
+            distortionTone = value; distortionBlock.setTone(value); break;
+        case kParamDistortionLevel:
+            distortionLevel = value; distortionBlock.setLevel(value); break;
+        case kParamDistortionBypass:
+            distortionBypass = value > 0.5f; chain.setEnabled(&distortionBlock, distortionOn && !distortionBypass); break;
+
         case kParamAmpPosition:
             ampPosition = value; chain.setPosition(&ampBlock, static_cast<int>(std::round(value))); break;
         case kParamAmpDrive:
@@ -660,6 +720,7 @@ protected:
         compBlock.setSampleRate(newSampleRate);
         wahBlock.setSampleRate(newSampleRate);
         screamerBlock.setSampleRate(newSampleRate);
+        distortionBlock.setSampleRate(newSampleRate);
         ampBlock.setSampleRate(newSampleRate);
         chorusBlock.setSampleRate(newSampleRate);
         phaserBlock.setSampleRate(newSampleRate);
@@ -705,6 +766,7 @@ private:
     ampforge::CompressorBlock compBlock;
     ampforge::WahBlock wahBlock;
     ampforge::ScreamerBlock screamerBlock;
+    ampforge::DistortionBlock distortionBlock;
     ampforge::AmpBlock ampBlock;
     ampforge::ChorusBlock chorusBlock;
     ampforge::PhaserBlock phaserBlock;
@@ -725,22 +787,25 @@ private:
     bool screamerOn = true;
     float screamerPosition = 3.0f, screamerDrive = 1.0f, screamerTone = 0.5f, screamerLevel = 0.0f;
 
-    float ampPosition = 4.0f, ampDrive = 0.0f, ampBass = 0.0f, ampMid = 0.0f, ampTreble = 0.0f, ampVolume = 0.0f;
+    bool distortionOn = false;
+    float distortionPosition = 4.0f, distortionDrive = 4.0f, distortionTone = 0.5f, distortionLevel = 0.0f;
+
+    float ampPosition = 5.0f, ampDrive = 0.0f, ampBass = 0.0f, ampMid = 0.0f, ampTreble = 0.0f, ampVolume = 0.0f;
 
     bool chorusOn = false;
-    float chorusPosition = 5.0f, chorusRate = 1.0f, chorusDepth = 5.0f, chorusMix = 0.5f;
+    float chorusPosition = 6.0f, chorusRate = 1.0f, chorusDepth = 5.0f, chorusMix = 0.5f;
 
     bool phaserOn = false;
-    float phaserPosition = 6.0f, phaserRate = 0.5f, phaserDepth = 0.7f, phaserMix = 0.5f;
+    float phaserPosition = 7.0f, phaserRate = 0.5f, phaserDepth = 0.7f, phaserMix = 0.5f;
 
     bool tremoloOn = false;
-    float tremoloPosition = 7.0f, tremoloRate = 5.0f, tremoloDepth = 0.5f;
+    float tremoloPosition = 8.0f, tremoloRate = 5.0f, tremoloDepth = 0.5f;
 
     bool delayOn = false;
-    float delayPosition = 8.0f, delayTime = 300.0f, delayFeedback = 0.3f, delayMix = 0.3f;
+    float delayPosition = 9.0f, delayTime = 300.0f, delayFeedback = 0.3f, delayMix = 0.3f;
 
     bool reverbOn = false;
-    float reverbPosition = 9.0f, reverbRoomSize = 0.5f, reverbDamping = 0.5f, reverbMix = 0.3f;
+    float reverbPosition = 10.0f, reverbRoomSize = 0.5f, reverbDamping = 0.5f, reverbMix = 0.3f;
 
     // Bypass flags - independent from the *On* flags above. See the
     // comment on the Bypass parameters in ChainParameters.hpp.
@@ -753,6 +818,7 @@ private:
     bool tremoloBypass = false;
     bool delayBypass = false;
     bool reverbBypass = false;
+    bool distortionBypass = false;
 
     DISTRHO_DECLARE_NON_COPYABLE(ChainPlugin)
 };

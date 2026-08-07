@@ -103,6 +103,13 @@ struct PedalDef
     int onParam;
     int bypassParam;
     int positionParam;
+    // The pedal's canonical slot in the recommended signal chain, used to
+    // place it when it's freshly added (see addPedalAtDefaultPosition()) -
+    // kept as an explicit field, separate from this array's own index,
+    // since new pedal types get appended at the end of this table (to
+    // keep kAmpPedalIndex and existing entries' indices stable) but may
+    // still belong earlier in the actual recommended chain order.
+    int defaultPosition;
     Color accent;
     std::vector<KnobDef> knobs;
 };
@@ -110,57 +117,66 @@ struct PedalDef
 // clang-format off
 static const PedalDef kPedalDefs[] =
 {
-    { "Noise Gate", kParamGateOn,     kParamGateBypass,     kParamGatePosition,  Color(130, 150, 210), {
+    { "Noise Gate", kParamGateOn,     kParamGateBypass,     kParamGatePosition,  0, Color(130, 150, 210), {
         { "Thresh",  kParamGateThreshold, -80.0f, 0.0f,    "dB", 1, false },
         { "Attack",  kParamGateAttack,      0.5f, 50.0f,   "ms", 1, false },
         { "Release", kParamGateRelease,    10.0f, 1000.0f, "ms", 0, false },
     }},
-    { "Compressor", kParamCompOn,     kParamCompBypass,     kParamCompPosition,  Color(175, 120, 225), {
+    { "Compressor", kParamCompOn,     kParamCompBypass,     kParamCompPosition,  1, Color(175, 120, 225), {
         { "Thresh",  kParamCompThreshold, -60.0f, 0.0f,    "dB", 1, false },
         { "Ratio",   kParamCompRatio,       1.0f, 20.0f,   ":1", 1, false },
         { "Attack",  kParamCompAttack,      0.5f, 100.0f,  "ms", 1, false },
         { "Release", kParamCompRelease,    10.0f, 1000.0f, "ms", 0, false },
         { "Makeup",  kParamCompMakeup,      0.0f, 24.0f,   "dB", 1, false },
     }},
-    { "Wah",        kParamWahOn,      kParamWahBypass,      kParamWahPosition,   Color(235, 155, 60), {
+    { "Wah",        kParamWahOn,      kParamWahBypass,      kParamWahPosition,   2, Color(235, 155, 60), {
         { "Pedal",   kParamWahPedal,  0.0f, 1.0f,  "", 0, true },
         { "Q",       kParamWahQ,      0.5f, 10.0f, "", 1, false },
     }},
-    { "Screamer",   kParamScreamerOn, kParamScreamerBypass, kParamScreamerPosition, Color(235, 95, 70), {
+    { "Screamer",   kParamScreamerOn, kParamScreamerBypass, kParamScreamerPosition, 3, Color(235, 95, 70), {
         { "Drive",   kParamScreamerDrive,  1.0f, 20.0f,  "x", 1, false },
         { "Tone",    kParamScreamerTone,   0.05f, 1.0f,  "",  0, true },
         { "Level",   kParamScreamerLevel, -24.0f, 12.0f, "dB", 1, false },
     }},
-    { "Amp",        -1,               -1,                   kParamAmpPosition,   Color(90, 170, 255), {
+    { "Amp",        -1,               -1,                   kParamAmpPosition,   5, Color(90, 170, 255), {
         { "Drive",   kParamAmpDrive,    0.0f, 36.0f,  "dB", 1, false },
         { "Bass",    kParamAmpBass,   -12.0f, 12.0f,  "dB", 1, false },
         { "Mid",     kParamAmpMid,    -12.0f, 12.0f,  "dB", 1, false },
         { "Treble",  kParamAmpTreble, -12.0f, 12.0f,  "dB", 1, false },
         { "Volume",  kParamAmpVolume, -24.0f, 12.0f,  "dB", 1, false },
     }},
-    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, Color(70, 205, 195), {
+    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, 6, Color(70, 205, 195), {
         { "Rate",    kParamChorusRate,   0.05f, 5.0f,  "Hz", 2, false },
         { "Depth",   kParamChorusDepth,  0.5f, 20.0f,  "ms", 1, false },
         { "Mix",     kParamChorusMix,    0.0f, 1.0f,   "",   0, true },
     }},
-    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, Color(185, 115, 235), {
+    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, 7, Color(185, 115, 235), {
         { "Rate",    kParamPhaserRate,  0.05f, 5.0f, "Hz", 2, false },
         { "Depth",   kParamPhaserDepth, 0.0f, 1.0f,  "",   0, true },
         { "Mix",     kParamPhaserMix,   0.0f, 1.0f,  "",   0, true },
     }},
-    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, Color(235, 205, 60), {
+    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, 8, Color(235, 205, 60), {
         { "Rate",    kParamTremoloRate,  0.5f, 15.0f, "Hz", 1, false },
         { "Depth",   kParamTremoloDepth, 0.0f, 1.0f,  "",   0, true },
     }},
-    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  Color(95, 225, 145), {
+    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  9, Color(95, 225, 145), {
         { "Time",     kParamDelayTime,      10.0f, 1500.0f, "ms", 0, false },
         { "Feedback", kParamDelayFeedback,   0.0f, 0.95f,   "",   0, true },
         { "Mix",      kParamDelayMix,        0.0f, 1.0f,    "",   0, true },
     }},
-    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, Color(115, 125, 235), {
+    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, 10, Color(115, 125, 235), {
         { "Room",     kParamReverbRoomSize, 0.0f, 1.0f, "", 0, true },
         { "Damping",  kParamReverbDamping,  0.0f, 1.0f, "", 0, true },
         { "Mix",      kParamReverbMix,      0.0f, 1.0f, "", 0, true },
+    }},
+    // Appended at the end of the table (rather than next to Screamer,
+    // where it belongs tonally) so every pedal above keeps the same array
+    // index - notably kAmpPedalIndex below. defaultPosition (4) is what
+    // actually places it right after Screamer when it's added.
+    { "Distortion", kParamDistortionOn, kParamDistortionBypass, kParamDistortionPosition, 4, Color(220, 75, 120), {
+        { "Drive",   kParamDistortionDrive,  1.0f, 30.0f,  "x", 1, false },
+        { "Tone",    kParamDistortionTone,   0.05f, 1.0f,  "",  0, true },
+        { "Level",   kParamDistortionLevel, -24.0f, 12.0f, "dB", 1, false },
     }},
 };
 // clang-format on
@@ -176,13 +192,14 @@ static const float kBlankPresetValues[kParamCount] =
     /* Comp      on,pos,thr,ratio,atk,rel,mkup */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
     /* Wah       on,pos,pedal,q */               0.0f, 2.0f, 0.5f, 3.0f,
     /* Screamer  on,pos,drive,tone,level */      0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-    /* Amp       pos,drive,bass,mid,treble,vol */ 4.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-    /* Chorus    on,pos,rate,depth,mix */        0.0f, 5.0f, 1.0f, 5.0f, 0.5f,
-    /* Phaser    on,pos,rate,depth,mix */        0.0f, 6.0f, 0.5f, 0.7f, 0.5f,
-    /* Tremolo   on,pos,rate,depth */            0.0f, 7.0f, 5.0f, 0.5f,
-    /* Delay     on,pos,time,fb,mix */           0.0f, 8.0f, 300.0f, 0.3f, 0.3f,
-    /* Reverb    on,pos,room,damp,mix */         0.0f, 9.0f, 0.5f, 0.5f, 0.3f,
+    /* Amp       pos,drive,bass,mid,treble,vol */ 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    /* Chorus    on,pos,rate,depth,mix */        0.0f, 6.0f, 1.0f, 5.0f, 0.5f,
+    /* Phaser    on,pos,rate,depth,mix */        0.0f, 7.0f, 0.5f, 0.7f, 0.5f,
+    /* Tremolo   on,pos,rate,depth */            0.0f, 8.0f, 5.0f, 0.5f,
+    /* Delay     on,pos,time,fb,mix */           0.0f, 9.0f, 300.0f, 0.3f, 0.3f,
+    /* Reverb    on,pos,room,damp,mix */         0.0f, 10.0f, 0.5f, 0.5f, 0.3f,
     /* Bypass x9 */                              0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
 };
 // clang-format on
 
@@ -1038,13 +1055,11 @@ private:
     }
 
     // Turns a pedal on and drops it into its canonical slot in the
-    // recommended signal chain, rather than appending it after whatever
-    // happens to be on the board already - that "append at the end"
-    // behavior was what made the order feel like it got scrambled after a
-    // few add/remove cycles. kPedalDefs is itself laid out in that
-    // recommended order (Gate, Comp, Wah, Screamer, Amp, Chorus, Phaser,
-    // Tremolo, Delay, Reverb), so a pedal's own index doubles as its
-    // default position - the user can still drag it anywhere afterward.
+    // recommended signal chain (PedalDef::defaultPosition), rather than
+    // appending it after whatever happens to be on the board already -
+    // that "append at the end" behavior was what made the order feel like
+    // it got scrambled after a few add/remove cycles. The user can still
+    // drag it anywhere afterward.
     void addPedalAtDefaultPosition(int pedalIndex)
     {
         moduleRemoving[pedalIndex] = false;
@@ -1054,7 +1069,7 @@ private:
         paramValues[onParam] = 1.0f;
 
         const int posParam = kPedalDefs[pedalIndex].positionParam;
-        const float newPos = static_cast<float>(pedalIndex);
+        const float newPos = static_cast<float>(kPedalDefs[pedalIndex].defaultPosition);
         editParameter(posParam, true);
         setParameterValue(posParam, newPos);
         paramValues[posParam] = newPos;

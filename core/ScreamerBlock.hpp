@@ -1,5 +1,6 @@
 #pragma once
 #include "AudioBlock.hpp"
+#include "Denormal.hpp"
 #include <cmath>
 #include <algorithm>
 
@@ -46,7 +47,7 @@ public:
         //    lower toneAmount is, the darker (more highs removed) it sounds;
         //    closer to 1.0 means brighter/more open.
         x = lastSample + toneAmount * (x - lastSample);
-        lastSample = x;
+        lastSample = flushDenormal(x);
 
         // 4) Output level
         return x * levelLinear;
