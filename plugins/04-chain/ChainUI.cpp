@@ -32,6 +32,7 @@
 #include <fstream>
 #include <filesystem>
 #include <chrono>
+#include <map>
 
 START_NAMESPACE_DISTRHO
 
@@ -76,6 +77,8 @@ static constexpr float kKnobCenterYOffset = 50.0f; // header bottom -> knob cent
 static constexpr float kValueChipW       = 70.0f;
 static constexpr float kValueChipH       = 18.0f;
 static constexpr float kValueChipGap     = 8.0f;
+static constexpr float kFileLoaderW      = 132.0f;
+static constexpr float kFileLoaderH      = 28.0f;
 static constexpr float kSwitchSize       = 18.0f;
 static constexpr float kRemoveSize       = 16.0f;
 static constexpr float kKnobDragSensitivity = 220.0f;
@@ -112,6 +115,12 @@ struct PedalDef
     int defaultPosition;
     Color accent;
     std::vector<KnobDef> knobs;
+    // When true, the card shows a "Load..." file-picker button (wired to
+    // a DPF State key, since a file path can't be a plain Parameter)
+    // instead of assuming every knob is enough - see stateKey below and
+    // ChainPlugin.cpp's initState()/getState()/setState().
+    bool hasFileLoader = false;
+    const char* stateKey = nullptr;
 };
 
 // clang-format off
@@ -145,39 +154,43 @@ static const PedalDef kPedalDefs[] =
         { "Treble",  kParamAmpTreble, -12.0f, 12.0f,  "dB", 1, false },
         { "Volume",  kParamAmpVolume, -24.0f, 12.0f,  "dB", 1, false },
     }},
-    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, 6, Color(70, 205, 195), {
+    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, 7, Color(70, 205, 195), {
         { "Rate",    kParamChorusRate,   0.05f, 5.0f,  "Hz", 2, false },
         { "Depth",   kParamChorusDepth,  0.5f, 20.0f,  "ms", 1, false },
         { "Mix",     kParamChorusMix,    0.0f, 1.0f,   "",   0, true },
     }},
-    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, 7, Color(185, 115, 235), {
+    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, 8, Color(185, 115, 235), {
         { "Rate",    kParamPhaserRate,  0.05f, 5.0f, "Hz", 2, false },
         { "Depth",   kParamPhaserDepth, 0.0f, 1.0f,  "",   0, true },
         { "Mix",     kParamPhaserMix,   0.0f, 1.0f,  "",   0, true },
     }},
-    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, 8, Color(235, 205, 60), {
+    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, 9, Color(235, 205, 60), {
         { "Rate",    kParamTremoloRate,  0.5f, 15.0f, "Hz", 1, false },
         { "Depth",   kParamTremoloDepth, 0.0f, 1.0f,  "",   0, true },
     }},
-    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  9, Color(95, 225, 145), {
+    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  10, Color(95, 225, 145), {
         { "Time",     kParamDelayTime,      10.0f, 1500.0f, "ms", 0, false },
         { "Feedback", kParamDelayFeedback,   0.0f, 0.95f,   "",   0, true },
         { "Mix",      kParamDelayMix,        0.0f, 1.0f,    "",   0, true },
     }},
-    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, 10, Color(115, 125, 235), {
+    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, 11, Color(115, 125, 235), {
         { "Room",     kParamReverbRoomSize, 0.0f, 1.0f, "", 0, true },
         { "Damping",  kParamReverbDamping,  0.0f, 1.0f, "", 0, true },
         { "Mix",      kParamReverbMix,      0.0f, 1.0f, "", 0, true },
     }},
-    // Appended at the end of the table (rather than next to Screamer,
-    // where it belongs tonally) so every pedal above keeps the same array
-    // index - notably kAmpPedalIndex below. defaultPosition (4) is what
-    // actually places it right after Screamer when it's added.
+    // Both appended at the end of the table (rather than where they
+    // belong tonally) so every pedal above keeps the same array index -
+    // notably kAmpPedalIndex below. Their defaultPosition fields are what
+    // actually place them correctly when added.
     { "Distortion", kParamDistortionOn, kParamDistortionBypass, kParamDistortionPosition, 4, Color(220, 75, 120), {
         { "Drive",   kParamDistortionDrive,  1.0f, 30.0f,  "x", 1, false },
         { "Tone",    kParamDistortionTone,   0.05f, 1.0f,  "",  0, true },
         { "Level",   kParamDistortionLevel, -24.0f, 12.0f, "dB", 1, false },
     }},
+    { "Cabinet",    kParamCabinetOn, kParamCabinetBypass, kParamCabinetPosition, 6, Color(200, 160, 90), {
+        { "Mix",     kParamCabinetMix,    0.0f, 1.0f,   "",   0, true },
+        { "Level",   kParamCabinetLevel, -24.0f, 12.0f, "dB", 1, false },
+    }, true, kCabinetIRStateKey },
 };
 // clang-format on
 static constexpr int kPedalDefCount = sizeof(kPedalDefs) / sizeof(kPedalDefs[0]);
@@ -193,13 +206,14 @@ static const float kBlankPresetValues[kParamCount] =
     /* Wah       on,pos,pedal,q */               0.0f, 2.0f, 0.5f, 3.0f,
     /* Screamer  on,pos,drive,tone,level */      0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
     /* Amp       pos,drive,bass,mid,treble,vol */ 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-    /* Chorus    on,pos,rate,depth,mix */        0.0f, 6.0f, 1.0f, 5.0f, 0.5f,
-    /* Phaser    on,pos,rate,depth,mix */        0.0f, 7.0f, 0.5f, 0.7f, 0.5f,
-    /* Tremolo   on,pos,rate,depth */            0.0f, 8.0f, 5.0f, 0.5f,
-    /* Delay     on,pos,time,fb,mix */           0.0f, 9.0f, 300.0f, 0.3f, 0.3f,
-    /* Reverb    on,pos,room,damp,mix */         0.0f, 10.0f, 0.5f, 0.5f, 0.3f,
+    /* Chorus    on,pos,rate,depth,mix */        0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
+    /* Phaser    on,pos,rate,depth,mix */        0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
+    /* Tremolo   on,pos,rate,depth */            0.0f, 9.0f, 5.0f, 0.5f,
+    /* Delay     on,pos,time,fb,mix */           0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
+    /* Reverb    on,pos,room,damp,mix */         0.0f, 11.0f, 0.5f, 0.5f, 0.3f,
     /* Bypass x9 */                              0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
     /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
+    /* Cabinet    on,pos,mix,level,bypass */        0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
 };
 // clang-format on
 
@@ -559,6 +573,16 @@ protected:
                     knobX += kKnobSpacing;
                 }
 
+                if (def.hasFileLoader)
+                {
+                    const float btnY = knobCenterY - kFileLoaderH * 0.5f;
+                    if (mx >= knobX && mx <= knobX + kFileLoaderW && my >= btnY && my <= btnY + kFileLoaderH)
+                    {
+                        requestStateFile(def.stateKey);
+                        return true;
+                    }
+                }
+
                 draggingModuleIndex = pedalIndex;
                 dragModuleGrabOffsetY = my - y;
                 dragModuleCurrentY = y;
@@ -674,6 +698,16 @@ protected:
         scrollOffset = std::max(-maxScroll, std::min(0.0f, scrollOffset));
         repaint();
         return true;
+    }
+
+    // The host informs us here whenever a DPF State value changes -
+    // whether from session restore or from our own requestStateFile()
+    // (see the file-loader button handling below). We just keep a local
+    // copy so the pedal card can display e.g. the loaded IR's filename.
+    void stateChanged(const char* key, const char* value) override
+    {
+        stateValues[key] = value;
+        repaint();
     }
 
 private:
@@ -1827,6 +1861,45 @@ private:
                 drawKnob(knobX, knobCenterY, knob, displayValues[knob.paramIndex], def.accent, bodyAlpha, isDraggingKnob, isEditingKnob);
                 knobX += kKnobSpacing;
             }
+
+            if (def.hasFileLoader)
+                drawFileLoaderButton(knobX, knobCenterY, def, bodyAlpha);
+    }
+
+    // The "Load..." button on a file-loader pedal card (currently just
+    // Cabinet) - shows the loaded file's name once one has been picked,
+    // or an invitation to load one otherwise.
+    void drawFileLoaderButton(float x, float centerY, const PedalDef& def, float alpha)
+    {
+        const float y = centerY - kFileLoaderH * 0.5f;
+
+        std::string label = "Load IR File...";
+        bool loaded = false;
+        const auto it = stateValues.find(def.stateKey != nullptr ? def.stateKey : "");
+        if (it != stateValues.end() && !it->second.empty())
+        {
+            label = std::filesystem::path(it->second).filename().string();
+            loaded = true;
+        }
+
+        beginPath();
+        roundedRect(x, y, kFileLoaderW, kFileLoaderH, 5.0f);
+        fillPaint(linearGradient(x, y, x, y + kFileLoaderH,
+                                  Color(kColorButton, Color(255, 255, 255), 0.08f).withAlpha(alpha),
+                                  Color(kColorButton, Color(0, 0, 0), 0.15f).withAlpha(alpha)));
+        fill();
+        closePath();
+        beginPath();
+        roundedRect(x, y, kFileLoaderW, kFileLoaderH, 5.0f);
+        strokeWidth(1.0f);
+        strokeColor((loaded ? def.accent : Color(255, 255, 255, 0.15f)).withAlpha(alpha));
+        stroke();
+        closePath();
+
+        fontSize(11.5f);
+        fillColor((loaded ? kColorTextPrimary : kColorTextMuted).withAlpha(alpha));
+        textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
+        text(x + kFileLoaderW * 0.5f, y + kFileLoaderH * 0.5f, label.c_str(), nullptr);
     }
 
     void drawKnob(float cx, float cy, const KnobDef& knob, float value, const Color& accent, float alpha, bool isDragging, bool isEditing)
@@ -1997,6 +2070,10 @@ private:
     std::string saveToastText;
 
     std::vector<CustomPreset> customPresets;
+
+    // Local mirror of DPF State key/value pairs (currently just the
+    // Cabinet block's loaded IR path), kept in sync via stateChanged().
+    std::map<std::string, std::string> stateValues;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChainUI)
 };

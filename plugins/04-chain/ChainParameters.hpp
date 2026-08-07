@@ -113,7 +113,24 @@ enum Parameters
     kParamDistortionLevel,
     kParamDistortionBypass,
 
+    // Cabinet - convolves with a loaded speaker-cabinet impulse response
+    // (see core/CabinetBlock.hpp). The IR file path itself isn't a plain
+    // automatable value, so it isn't a parameter at all - it travels as
+    // DPF plugin State instead, under kCabinetIRStateKey below, which is
+    // why this block only has Mix/Level/On/Position/Bypass here.
+    kParamCabinetOn,
+    kParamCabinetPosition,
+    kParamCabinetMix,
+    kParamCabinetLevel,
+    kParamCabinetBypass,
+
     kParamCount
 };
+
+// The DPF State key that carries the Cabinet block's loaded impulse-
+// response file path. Shared between ChainPlugin.cpp (the state's actual
+// owner) and ChainUI.cpp (which requests/display it), the same way the
+// Parameters enum above is shared, so the two sides can't drift apart.
+static const char* const kCabinetIRStateKey = "cabinet_ir_path";
 
 END_NAMESPACE_DISTRHO

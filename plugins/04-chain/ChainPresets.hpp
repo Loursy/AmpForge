@@ -19,13 +19,16 @@ START_NAMESPACE_DISTRHO
 // this snapshot by calling setParameterValue() for every entry, which
 // keeps the chain's internal state and the EffectChain enabled/position
 // flags perfectly in sync - the same code path a host uses when it
-// moves a knob.
+// moves a knob. (The Cabinet block's loaded IR file, if any, is DPF
+// State rather than a parameter, so it isn't part of this snapshot -
+// factory presets never carry a bundled IR.)
 //
 // Chain order (the *Position values) is kept at the default pedalboard
 // layout for every preset here - only which blocks are on/off and their
 // tone-shaping parameters differ between presets. That default layout is
 // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Distortion(4) -> Amp(5)
-// -> Chorus(6) -> Phaser(7) -> Tremolo(8) -> Delay(9) -> Reverb(10).
+// -> Cabinet(6) -> Chorus(7) -> Phaser(8) -> Tremolo(9) -> Delay(10) ->
+// Reverb(11).
 static constexpr uint32_t kProgramCount = 6;
 
 struct PresetDefinition
@@ -48,13 +51,14 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        on,pos,pedal,q  */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   on,pos,drive,tone,level */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
             /* Amp        pos,drive,bass,mid,treble,vol */ 5.0f, 3.0f, 2.0f, -3.0f, 4.0f, 0.0f,
-            /* Chorus     on,pos,rate,depth,mix */ 0.0f, 6.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     on,pos,rate,depth,mix */ 0.0f, 7.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    on,pos,rate,depth */ 1.0f, 8.0f, 4.0f, 0.3f,
-            /* Delay      on,pos,time,fb,mix */ 0.0f, 9.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     on,pos,room,damp,mix */ 1.0f, 10.0f, 0.3f, 0.6f, 0.2f,
+            /* Chorus     on,pos,rate,depth,mix */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     on,pos,rate,depth,mix */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    on,pos,rate,depth */ 1.0f, 9.0f, 4.0f, 0.3f,
+            /* Delay      on,pos,time,fb,mix */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     on,pos,room,damp,mix */ 1.0f, 11.0f, 0.3f, 0.6f, 0.2f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
+            /* Cabinet    on,pos,mix,level,bypass */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
         }
     },
 
@@ -68,13 +72,14 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 1.0f, 3.0f, 6.0f, 0.6f, 0.0f,
             /* Amp        */ 5.0f, 18.0f, 3.0f, 4.0f, 2.0f, 0.0f,
-            /* Chorus     */ 0.0f, 6.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 7.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 8.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 9.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 1.0f, 10.0f, 0.4f, 0.5f, 0.15f,
+            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
+            /* Delay      */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     */ 1.0f, 11.0f, 0.4f, 0.5f, 0.15f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
+            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
         }
     },
 
@@ -89,13 +94,14 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 1.0f, 3.0f, 12.0f, 0.7f, 3.0f,
             /* Amp        */ 5.0f, 30.0f, 2.0f, 6.0f, 3.0f, 3.0f,
-            /* Chorus     */ 0.0f, 6.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 7.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 8.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 9.0f, 350.0f, 0.25f, 0.2f,
-            /* Reverb     */ 1.0f, 10.0f, 0.6f, 0.4f, 0.25f,
+            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
+            /* Delay      */ 1.0f, 10.0f, 350.0f, 0.25f, 0.2f,
+            /* Reverb     */ 1.0f, 11.0f, 0.6f, 0.4f, 0.25f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
+            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
         }
     },
 
@@ -111,13 +117,14 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 1.0f, 3.0f, 8.0f, 0.4f, 0.0f,
             /* Amp        */ 5.0f, 34.0f, 5.0f, -2.0f, 1.0f, 0.0f,
-            /* Chorus     */ 0.0f, 6.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 7.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 8.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 9.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 0.0f, 10.0f, 0.5f, 0.5f, 0.3f,
+            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
+            /* Delay      */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     */ 0.0f, 11.0f, 0.5f, 0.5f, 0.3f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion on,pos,drive,tone,level,bypass */ 1.0f, 4.0f, 10.0f, 0.35f, -2.0f, 0.0f,
+            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
         }
     },
 
@@ -132,13 +139,14 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
             /* Amp        */ 5.0f, 5.0f, 1.0f, 0.0f, 2.0f, 0.0f,
-            /* Chorus     */ 1.0f, 6.0f, 0.4f, 8.0f, 0.6f,
-            /* Phaser     */ 1.0f, 7.0f, 0.2f, 0.5f, 0.3f,
-            /* Tremolo    */ 0.0f, 8.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 9.0f, 500.0f, 0.45f, 0.35f,
-            /* Reverb     */ 1.0f, 10.0f, 0.85f, 0.3f, 0.5f,
+            /* Chorus     */ 1.0f, 7.0f, 0.4f, 8.0f, 0.6f,
+            /* Phaser     */ 1.0f, 8.0f, 0.2f, 0.5f, 0.3f,
+            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
+            /* Delay      */ 1.0f, 10.0f, 500.0f, 0.45f, 0.35f,
+            /* Reverb     */ 1.0f, 11.0f, 0.85f, 0.3f, 0.5f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
+            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
         }
     },
 
@@ -153,13 +161,14 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 1.0f, 2.0f, 0.5f, 4.0f,
             /* Screamer   */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
             /* Amp        */ 5.0f, 2.0f, 0.0f, 1.0f, 3.0f, 0.0f,
-            /* Chorus     */ 0.0f, 6.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 7.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 8.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 9.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 1.0f, 10.0f, 0.25f, 0.6f, 0.15f,
+            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
+            /* Delay      */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     */ 1.0f, 11.0f, 0.25f, 0.6f, 0.15f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
+            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
         }
     },
 };

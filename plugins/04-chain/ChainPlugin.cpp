@@ -2,14 +2,14 @@
  * AmpForge - Main Chain Plugin (Phase 8)
  *
  * The main AmpForge plugin: a single plugin instance running a
- * reorderable chain of 10 modules, the way Guitar Rig / BIAS FX work.
+ * reorderable chain of 12 modules, the way Guitar Rig / BIAS FX work.
  *
  * Default chain order (a typical pedalboard layout):
- *   0: Noise Gate  1: Compressor  2: Wah       3: Screamer  4: Distortion
- *   5: Amp         6: Chorus      7: Phaser    8: Tremolo   9: Delay
- *   10: Reverb
+ *   0: Noise Gate  1: Compressor  2: Wah         3: Screamer  4: Distortion
+ *   5: Amp         6: Cabinet     7: Chorus      8: Phaser    9: Tremolo
+ *   10: Delay      11: Reverb
  *
- * Every block has a "Position" parameter (0-9) controlling where it
+ * Every block has a "Position" parameter (0-11) controlling where it
  * sits in the chain - this is what EffectChain (core/EffectChain.hpp)
  * uses to decide processing order. Until we build the GUI, position
  * is set via plain automatable parameters from the host.
@@ -20,6 +20,7 @@
 #include "ChainPresets.hpp"
 #include "ScreamerBlock.hpp"
 #include "DistortionBlock.hpp"
+#include "CabinetBlock.hpp"
 #include "AmpBlock.hpp"
 #include "DelayBlock.hpp"
 #include "ReverbBlock.hpp"
@@ -31,6 +32,8 @@
 #include "WahBlock.hpp"
 #include "EffectChain.hpp"
 #include <cmath>
+#include <cstring>
+#include <string>
 
 START_NAMESPACE_DISTRHO
 
@@ -41,7 +44,7 @@ class ChainPlugin : public Plugin
 {
 public:
     ChainPlugin()
-        : Plugin(kParamCount, kProgramCount, 0)
+        : Plugin(kParamCount, kProgramCount, 1) // 1 state: the Cabinet block's loaded IR file path
     {
         gateBlock.setThresholdDB(-50.0f);
         gateBlock.setAttackMs(5.0f);
@@ -63,6 +66,9 @@ public:
         distortionBlock.setDrive(4.0f);
         distortionBlock.setTone(0.5f);
         distortionBlock.setLevel(0.0f);
+
+        cabinetBlock.setMix(1.0f);
+        cabinetBlock.setLevel(0.0f);
 
         ampBlock.setDriveDB(0.0f);
         ampBlock.setBassDB(0.0f);
@@ -91,19 +97,20 @@ public:
 
         // Default pedalboard order:
         // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Distortion(4) ->
-        // Amp(5) -> Chorus(6) -> Phaser(7) -> Tremolo(8) -> Delay(9) ->
-        // Reverb(10)
+        // Amp(5) -> Cabinet(6) -> Chorus(7) -> Phaser(8) -> Tremolo(9) ->
+        // Delay(10) -> Reverb(11)
         chain.addBlock(&gateBlock, 0);
         chain.addBlock(&compBlock, 1);
         chain.addBlock(&wahBlock, 2);
         chain.addBlock(&screamerBlock, 3);
         chain.addBlock(&distortionBlock, 4);
         chain.addBlock(&ampBlock, 5);
-        chain.addBlock(&chorusBlock, 6);
-        chain.addBlock(&phaserBlock, 7);
-        chain.addBlock(&tremoloBlock, 8);
-        chain.addBlock(&delayBlock, 9);
-        chain.addBlock(&reverbBlock, 10);
+        chain.addBlock(&cabinetBlock, 6);
+        chain.addBlock(&chorusBlock, 7);
+        chain.addBlock(&phaserBlock, 8);
+        chain.addBlock(&tremoloBlock, 9);
+        chain.addBlock(&delayBlock, 10);
+        chain.addBlock(&reverbBlock, 11);
         chain.rebuildOrder();
 
         // Amp is always part of the signal path.
@@ -116,6 +123,7 @@ public:
         chain.setEnabled(&wahBlock, false);
         chain.setEnabled(&screamerBlock, true);
         chain.setEnabled(&distortionBlock, false);
+        chain.setEnabled(&cabinetBlock, false);
         chain.setEnabled(&chorusBlock, false);
         chain.setEnabled(&phaserBlock, false);
         chain.setEnabled(&tremoloBlock, false);
@@ -134,6 +142,7 @@ public:
         wahBlock.setSampleRate(initialSampleRate);
         screamerBlock.setSampleRate(initialSampleRate);
         distortionBlock.setSampleRate(initialSampleRate);
+        cabinetBlock.setSampleRate(initialSampleRate);
         ampBlock.setSampleRate(initialSampleRate);
         chorusBlock.setSampleRate(initialSampleRate);
         phaserBlock.setSampleRate(initialSampleRate);
@@ -165,7 +174,7 @@ protected:
         case kParamGatePosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Gate Position"; parameter.symbol = "gate_position";
-            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamGateThreshold:
             parameter.name = "Gate Threshold"; parameter.symbol = "gate_threshold"; parameter.unit = "dB";
@@ -189,7 +198,7 @@ protected:
         case kParamCompPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Compressor Position"; parameter.symbol = "comp_position";
-            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamCompThreshold:
             parameter.name = "Compressor Threshold"; parameter.symbol = "comp_threshold"; parameter.unit = "dB";
@@ -221,7 +230,7 @@ protected:
         case kParamWahPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Wah Chain Position"; parameter.symbol = "wah_chain_position";
-            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamWahPedal:
             parameter.name = "Wah Pedal"; parameter.symbol = "wah_pedal";
@@ -241,7 +250,7 @@ protected:
         case kParamScreamerPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Screamer Position"; parameter.symbol = "screamer_position";
-            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamScreamerDrive:
             parameter.name = "Screamer Drive"; parameter.symbol = "screamer_drive"; parameter.unit = "x";
@@ -266,7 +275,7 @@ protected:
         case kParamDistortionPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Distortion Position"; parameter.symbol = "distortion_position";
-            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamDistortionDrive:
             parameter.name = "Distortion Drive"; parameter.symbol = "distortion_drive"; parameter.unit = "x";
@@ -290,7 +299,7 @@ protected:
         case kParamAmpPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Amp Position"; parameter.symbol = "amp_position";
-            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamAmpDrive:
             parameter.name = "Amp Drive"; parameter.symbol = "amp_drive"; parameter.unit = "dB";
@@ -313,6 +322,33 @@ protected:
             parameter.ranges.def = 0.0f; parameter.ranges.min = -24.0f; parameter.ranges.max = 12.0f;
             break;
 
+        // --- Cabinet (convolves with a loaded speaker-cab impulse
+        // response - see core/CabinetBlock.hpp. The IR file path itself
+        // is DPF State, not a parameter; see initState() below) ---
+        case kParamCabinetOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Cabinet On"; parameter.symbol = "cabinet_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamCabinetPosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Cabinet Position"; parameter.symbol = "cabinet_position";
+            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            break;
+        case kParamCabinetMix:
+            parameter.name = "Cabinet Mix"; parameter.symbol = "cabinet_mix";
+            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamCabinetLevel:
+            parameter.name = "Cabinet Level"; parameter.symbol = "cabinet_level"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = -24.0f; parameter.ranges.max = 12.0f;
+            break;
+        case kParamCabinetBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Cabinet Bypass"; parameter.symbol = "cabinet_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
         // --- Chorus ---
         case kParamChorusOn:
             parameter.hints |= kParameterIsBoolean;
@@ -322,7 +358,7 @@ protected:
         case kParamChorusPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Chorus Position"; parameter.symbol = "chorus_position";
-            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamChorusRate:
             parameter.name = "Chorus Rate"; parameter.symbol = "chorus_rate"; parameter.unit = "Hz";
@@ -346,7 +382,7 @@ protected:
         case kParamPhaserPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Phaser Position"; parameter.symbol = "phaser_position";
-            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamPhaserRate:
             parameter.name = "Phaser Rate"; parameter.symbol = "phaser_rate"; parameter.unit = "Hz";
@@ -370,7 +406,7 @@ protected:
         case kParamTremoloPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Tremolo Position"; parameter.symbol = "tremolo_position";
-            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamTremoloRate:
             parameter.name = "Tremolo Rate"; parameter.symbol = "tremolo_rate"; parameter.unit = "Hz";
@@ -390,7 +426,7 @@ protected:
         case kParamDelayPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Delay Position"; parameter.symbol = "delay_position";
-            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamDelayTime:
             parameter.name = "Delay Time"; parameter.symbol = "delay_time"; parameter.unit = "ms";
@@ -414,7 +450,7 @@ protected:
         case kParamReverbPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Reverb Position"; parameter.symbol = "reverb_position";
-            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 10.0f;
+            parameter.ranges.def = 11.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
             break;
         case kParamReverbRoomSize:
             parameter.name = "Reverb Room Size"; parameter.symbol = "reverb_room_size";
@@ -520,6 +556,12 @@ protected:
         case kParamAmpMid:           return ampMid;
         case kParamAmpTreble:        return ampTreble;
         case kParamAmpVolume:        return ampVolume;
+
+        case kParamCabinetOn:       return cabinetOn ? 1.0f : 0.0f;
+        case kParamCabinetPosition: return cabinetPosition;
+        case kParamCabinetMix:      return cabinetMix;
+        case kParamCabinetLevel:    return cabinetLevel;
+        case kParamCabinetBypass:   return cabinetBypass ? 1.0f : 0.0f;
 
         case kParamChorusOn:         return chorusOn ? 1.0f : 0.0f;
         case kParamChorusPosition:   return chorusPosition;
@@ -640,6 +682,17 @@ protected:
         case kParamAmpVolume:
             ampVolume = value; ampBlock.setVolumeDB(value); break;
 
+        case kParamCabinetOn:
+            cabinetOn = value > 0.5f; chain.setEnabled(&cabinetBlock, cabinetOn && !cabinetBypass); break;
+        case kParamCabinetPosition:
+            cabinetPosition = value; chain.setPosition(&cabinetBlock, static_cast<int>(std::round(value))); break;
+        case kParamCabinetMix:
+            cabinetMix = value; cabinetBlock.setMix(value); break;
+        case kParamCabinetLevel:
+            cabinetLevel = value; cabinetBlock.setLevel(value); break;
+        case kParamCabinetBypass:
+            cabinetBypass = value > 0.5f; chain.setEnabled(&cabinetBlock, cabinetOn && !cabinetBypass); break;
+
         case kParamChorusOn:
             chorusOn = value > 0.5f; chain.setEnabled(&chorusBlock, chorusOn && !chorusBypass); break;
         case kParamChorusPosition:
@@ -721,12 +774,20 @@ protected:
         wahBlock.setSampleRate(newSampleRate);
         screamerBlock.setSampleRate(newSampleRate);
         distortionBlock.setSampleRate(newSampleRate);
+        cabinetBlock.setSampleRate(newSampleRate);
         ampBlock.setSampleRate(newSampleRate);
         chorusBlock.setSampleRate(newSampleRate);
         phaserBlock.setSampleRate(newSampleRate);
         tremoloBlock.setSampleRate(newSampleRate);
         delayBlock.setSampleRate(newSampleRate);
         reverbBlock.setSampleRate(newSampleRate);
+
+        // The Cabinet block resamples its IR to whatever sample rate was
+        // active at load time - if the rate changes later (e.g. the user
+        // switches audio interfaces mid-session), re-run the load against
+        // the new rate so the IR doesn't stay resampled for a now-stale rate.
+        if (!cabinetIRPath.empty())
+            cabinetBlock.loadImpulseResponse(cabinetIRPath);
     }
 
     // Reports the preset names to the host, so they show up in its
@@ -752,6 +813,46 @@ protected:
             setParameterValue(i, preset.values[i]);
     }
 
+    // The Cabinet block's loaded IR file path is DPF State rather than a
+    // Parameter - a file path isn't a plain automatable float, but it
+    // still needs to travel with the DAW session the same way every
+    // other value here does. kStateIsFilenamePath tells hosts that
+    // support it to offer their own native file picker for this state.
+    void initState(uint32_t index, State& state) override
+    {
+        if (index != 0)
+            return;
+
+        state.key = kCabinetIRStateKey;
+        state.label = "Cabinet IR File";
+        state.description = "WAV impulse response file loaded into the Cabinet block's convolution engine.";
+        state.hints = kStateIsFilenamePath;
+        state.defaultValue = "";
+    }
+
+    // Called by the host when it wants to persist our state (saving a
+    // session/project). The host may call this from any non-realtime context.
+    String getState(const char* key) const override
+    {
+        if (std::strcmp(key, kCabinetIRStateKey) == 0)
+            return String(cabinetIRPath.c_str());
+        return String();
+    }
+
+    // Called by the host to restore previously-saved state (or when the UI
+    // asks us to load a new file via UI::requestStateFile()). Loading the
+    // WAV itself is safe to do here even though this isn't the audio
+    // thread - see CabinetBlock::loadImpulseResponse()'s own comment.
+    void setState(const char* key, const char* value) override
+    {
+        if (std::strcmp(key, kCabinetIRStateKey) != 0)
+            return;
+
+        cabinetIRPath = value;
+        if (!cabinetIRPath.empty())
+            cabinetBlock.loadImpulseResponse(cabinetIRPath);
+    }
+
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
         const float* in  = inputs[0];
@@ -767,6 +868,7 @@ private:
     ampforge::WahBlock wahBlock;
     ampforge::ScreamerBlock screamerBlock;
     ampforge::DistortionBlock distortionBlock;
+    ampforge::CabinetBlock cabinetBlock;
     ampforge::AmpBlock ampBlock;
     ampforge::ChorusBlock chorusBlock;
     ampforge::PhaserBlock phaserBlock;
@@ -789,6 +891,12 @@ private:
 
     bool distortionOn = false;
     float distortionPosition = 4.0f, distortionDrive = 4.0f, distortionTone = 0.5f, distortionLevel = 0.0f;
+
+    bool cabinetOn = false;
+    float cabinetPosition = 6.0f, cabinetMix = 1.0f, cabinetLevel = 0.0f;
+    // The loaded IR's path, carried as DPF State rather than a Parameter -
+    // see initState()/getState()/setState() below.
+    std::string cabinetIRPath;
 
     float ampPosition = 5.0f, ampDrive = 0.0f, ampBass = 0.0f, ampMid = 0.0f, ampTreble = 0.0f, ampVolume = 0.0f;
 
@@ -819,6 +927,7 @@ private:
     bool delayBypass = false;
     bool reverbBypass = false;
     bool distortionBypass = false;
+    bool cabinetBypass = false;
 
     DISTRHO_DECLARE_NON_COPYABLE(ChainPlugin)
 };
