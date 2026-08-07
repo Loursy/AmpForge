@@ -124,6 +124,14 @@ enum Parameters
     kParamCabinetLevel,
     kParamCabinetBypass,
 
+    // Gate Range - how far the gate pulls the signal down when closed,
+    // instead of always slamming it to full silence. Added after every
+    // other parameter (including Cabinet above) so existing parameter
+    // indices, and every already-saved preset/session, keep working
+    // unchanged - same reasoning as the Bypass block and Distortion/
+    // Cabinet additions above.
+    kParamGateRange,
+
     kParamCount
 };
 

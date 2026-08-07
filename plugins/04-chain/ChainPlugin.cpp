@@ -49,6 +49,7 @@ public:
         gateBlock.setThresholdDB(-50.0f);
         gateBlock.setAttackMs(5.0f);
         gateBlock.setReleaseMs(150.0f);
+        gateBlock.setRangeDB(40.0f);
 
         compBlock.setThresholdDB(-18.0f);
         compBlock.setRatio(4.0f);
@@ -155,7 +156,7 @@ protected:
     const char* getLabel() const override        { return "AmpForge"; }
     const char* getDescription() const override   { return "AmpForge: a full reorderable pedalboard-and-amp chain."; }
     const char* getMaker() const override          { return "Atakan"; }
-    const char* getLicense() const override        { return "MIT"; }
+    const char* getLicense() const override        { return "GPL-3.0-or-later"; }
     uint32_t getVersion() const override            { return d_version(0, 4, 0); }
     int64_t getUniqueId() const override            { return d_cconst('A', 'm', 'p', 'M'); }
 
@@ -187,6 +188,10 @@ protected:
         case kParamGateRelease:
             parameter.name = "Gate Release"; parameter.symbol = "gate_release"; parameter.unit = "ms";
             parameter.ranges.def = 150.0f; parameter.ranges.min = 10.0f; parameter.ranges.max = 1000.0f;
+            break;
+        case kParamGateRange:
+            parameter.name = "Gate Range"; parameter.symbol = "gate_range"; parameter.unit = "dB";
+            parameter.ranges.def = 40.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 80.0f;
             break;
 
         // --- Compressor ---
@@ -523,6 +528,7 @@ protected:
         case kParamGateThreshold:  return gateThreshold;
         case kParamGateAttack:     return gateAttack;
         case kParamGateRelease:    return gateRelease;
+        case kParamGateRange:      return gateRange;
 
         case kParamCompOn:         return compOn ? 1.0f : 0.0f;
         case kParamCompPosition:   return compPosition;
@@ -620,6 +626,8 @@ protected:
             gateAttack = value; gateBlock.setAttackMs(value); break;
         case kParamGateRelease:
             gateRelease = value; gateBlock.setReleaseMs(value); break;
+        case kParamGateRange:
+            gateRange = value; gateBlock.setRangeDB(value); break;
 
         case kParamCompOn:
             compOn = value > 0.5f; chain.setEnabled(&compBlock, compOn && !compBypass); break;
@@ -878,7 +886,7 @@ private:
     ampforge::EffectChain chain;
 
     bool gateOn = false;
-    float gatePosition = 0.0f, gateThreshold = -50.0f, gateAttack = 5.0f, gateRelease = 150.0f;
+    float gatePosition = 0.0f, gateThreshold = -50.0f, gateAttack = 5.0f, gateRelease = 150.0f, gateRange = 40.0f;
 
     bool compOn = false;
     float compPosition = 1.0f, compThreshold = -18.0f, compRatio = 4.0f, compAttack = 10.0f, compRelease = 100.0f, compMakeup = 0.0f;

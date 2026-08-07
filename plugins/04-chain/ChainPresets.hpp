@@ -29,6 +29,17 @@ START_NAMESPACE_DISTRHO
 // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Distortion(4) -> Amp(5)
 // -> Cabinet(6) -> Chorus(7) -> Phaser(8) -> Tremolo(9) -> Delay(10) ->
 // Reverb(11).
+//
+// Gain-staging rule these all follow: AmpBlock's Drive feeds a tanh()
+// soft-clip, and Screamer/Distortion are hard clippers ahead of it (see
+// their headers in core/). Stacking two hard clippers at high Drive back
+// to back (Screamer into Distortion, or either one dimed straight into a
+// maxed Amp Drive) mostly just flattens the waveform into a fizzy square
+// wave rather than adding useful character - so each preset below leans
+// on ONE stage for most of the grit and keeps the others as a modest
+// boost/tone-shaper, and none of the output-level knobs (Screamer/
+// Distortion Level, Amp Volume) stack positive dB on top of each other,
+// since nothing downstream clips an overs signal for us.
 static constexpr uint32_t kProgramCount = 6;
 
 struct PresetDefinition
@@ -40,38 +51,43 @@ struct PresetDefinition
 // clang-format off
 static const PresetDefinition kPresets[kProgramCount] =
 {
-    // "Fender Clean" - light compression for sustain, a scooped-mid EQ,
-    // a touch of vibrato (tremolo) and a subtle spring-like reverb -
-    // the classic clean American amp sound.
+    // "Fender Clean" - Amp Drive at 0dB (unity gain into the tanh stage,
+    // so it stays clean regardless of how hot the input is), gentle
+    // compression for sustain, a scooped-mid/chimey-treble EQ, a touch of
+    // vibrato (tremolo) and a subtle spring-like reverb - the classic
+    // clean American amp sound.
     {
         "Fender Clean",
         {
             /* Gate       on,pos,thr,atk,rel      */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp       on,pos,thr,ratio,atk,rel,makeup */ 1.0f, 1.0f, -20.0f, 3.0f, 5.0f, 80.0f, 2.0f,
+            /* Comp       on,pos,thr,ratio,atk,rel,makeup */ 1.0f, 1.0f, -22.0f, 2.5f, 8.0f, 100.0f, 1.0f,
             /* Wah        on,pos,pedal,q  */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   on,pos,drive,tone,level */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp        pos,drive,bass,mid,treble,vol */ 5.0f, 3.0f, 2.0f, -3.0f, 4.0f, 0.0f,
+            /* Amp        pos,drive,bass,mid,treble,vol */ 5.0f, 0.0f, 1.0f, -2.0f, 3.0f, 0.5f,
             /* Chorus     on,pos,rate,depth,mix */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
             /* Phaser     on,pos,rate,depth,mix */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    on,pos,rate,depth */ 1.0f, 9.0f, 4.0f, 0.3f,
+            /* Tremolo    on,pos,rate,depth */ 1.0f, 9.0f, 4.0f, 0.25f,
             /* Delay      on,pos,time,fb,mix */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     on,pos,room,damp,mix */ 1.0f, 11.0f, 0.3f, 0.6f, 0.2f,
+            /* Reverb     on,pos,room,damp,mix */ 1.0f, 11.0f, 0.3f, 0.6f, 0.18f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    on,pos,mix,level,bypass */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
+            /* Gate Range */ 40.0f,
         }
     },
 
-    // "Marshall Rock" - Screamer pushing a cranked British-voiced amp,
-    // classic mid-forward rock rhythm/lead tone with a touch of room reverb.
+    // "Marshall Rock" - a modest Screamer boost (just enough to push the
+    // amp, not clip on its own) into a hot, mid-forward Amp Drive that
+    // does the actual saturating - classic cranked-British-stack rhythm/
+    // lead tone, with a touch of room reverb.
     {
         "Marshall Rock",
         {
             /* Gate       */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
             /* Comp       */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer   */ 1.0f, 3.0f, 6.0f, 0.6f, 0.0f,
-            /* Amp        */ 5.0f, 18.0f, 3.0f, 4.0f, 2.0f, 0.0f,
+            /* Screamer   */ 1.0f, 3.0f, 4.0f, 0.6f, 1.0f,
+            /* Amp        */ 5.0f, 20.0f, 3.0f, 4.0f, 2.0f, 0.0f,
             /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
             /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
             /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
@@ -80,57 +96,66 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
+            /* Gate Range */ 40.0f,
         }
     },
 
-    // "Shredder Lead" - high gain solo tone: noise gate to keep it tight,
-    // hot Screamer into a saturated amp, boosted output level, and a
-    // slapback-ish delay + reverb tail for a solo that sits in the mix.
+    // "Shredder Lead" - the Screamer is dialed back to a light boost
+    // (its own hard clipper barely engages) so the *Amp's* smooth tanh
+    // saturation - not a squared-off pedal waveform - is what actually
+    // shapes the tone; that's what makes a lead sing/sustain instead of
+    // buzzing apart under fast picking or tapping. A sustain-friendly
+    // compressor evens out pick attack, boosted mid keeps it cutting
+    // through, and a tamed slapback delay + reverb tail sits it in the
+    // mix without smearing fast runs.
     {
         "Shredder Lead",
         {
             /* Gate       */ 1.0f, 0.0f, -45.0f, 2.0f, 100.0f,
-            /* Comp       */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
+            /* Comp       */ 1.0f, 1.0f, -24.0f, 3.0f, 5.0f, 150.0f, 2.0f,
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer   */ 1.0f, 3.0f, 12.0f, 0.7f, 3.0f,
-            /* Amp        */ 5.0f, 30.0f, 2.0f, 6.0f, 3.0f, 3.0f,
+            /* Screamer   */ 1.0f, 3.0f, 3.0f, 0.6f, 2.0f,
+            /* Amp        */ 5.0f, 26.0f, 2.0f, 6.0f, 3.0f, 0.0f,
             /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
             /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
             /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 10.0f, 350.0f, 0.25f, 0.2f,
-            /* Reverb     */ 1.0f, 11.0f, 0.6f, 0.4f, 0.25f,
+            /* Delay      */ 1.0f, 10.0f, 350.0f, 0.2f, 0.18f,
+            /* Reverb     */ 1.0f, 11.0f, 0.5f, 0.45f, 0.2f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
+            /* Gate Range */ 40.0f,
         }
     },
 
-    // "Metal Rhythm" - tight noise gate, dark/scooped tone, a Distortion
-    // stage stacked after Screamer for a tighter, more aggressive clip
-    // than either pedal alone, no time-based effects (keeps palm-muted
-    // chugs tight).
+    // "Metal Rhythm" - tight noise gate, a light Screamer boost (again,
+    // not clipping on its own) into Distortion as the *one* stage doing
+    // the actual hard clipping, a deeper mid scoop and rolled-off treble
+    // to keep it tight instead of fizzy, no time-based effects (keeps
+    // palm-muted chugs tight).
     {
         "Metal Rhythm",
         {
-            /* Gate       */ 1.0f, 0.0f, -40.0f, 1.0f, 80.0f,
+            /* Gate       */ 1.0f, 0.0f, -40.0f, 1.0f, 60.0f,
             /* Comp       */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer   */ 1.0f, 3.0f, 8.0f, 0.4f, 0.0f,
-            /* Amp        */ 5.0f, 34.0f, 5.0f, -2.0f, 1.0f, 0.0f,
+            /* Screamer   */ 1.0f, 3.0f, 4.0f, 0.4f, 0.0f,
+            /* Amp        */ 5.0f, 22.0f, 2.0f, -4.0f, 0.0f, 0.0f,
             /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
             /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
             /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
             /* Delay      */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
             /* Reverb     */ 0.0f, 11.0f, 0.5f, 0.5f, 0.3f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* Distortion on,pos,drive,tone,level,bypass */ 1.0f, 4.0f, 10.0f, 0.35f, -2.0f, 0.0f,
+            /* Distortion on,pos,drive,tone,level,bypass */ 1.0f, 4.0f, 12.0f, 0.3f, -3.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
+            /* Gate Range */ 60.0f,
         }
     },
 
-    // "Ambient Shoegaze" - clean-ish amp, compressor for even sustain,
-    // chorus + phaser stacked for a wide, swirling texture, long delay
-    // and a big, dark reverb tail.
+    // "Ambient Shoegaze" - clean-ish amp with a light mid scoop for
+    // space, compressor for even sustain, chorus + phaser stacked for a
+    // wide, swirling texture, long delay and a big, dark reverb tail.
     {
         "Ambient Shoegaze",
         {
@@ -138,7 +163,7 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Comp       */ 1.0f, 1.0f, -24.0f, 3.0f, 15.0f, 200.0f, 2.0f,
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp        */ 5.0f, 5.0f, 1.0f, 0.0f, 2.0f, 0.0f,
+            /* Amp        */ 5.0f, 6.0f, 1.5f, -2.0f, 1.5f, 0.0f,
             /* Chorus     */ 1.0f, 7.0f, 0.4f, 8.0f, 0.6f,
             /* Phaser     */ 1.0f, 8.0f, 0.2f, 0.5f, 0.3f,
             /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
@@ -147,20 +172,22 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
+            /* Gate Range */ 40.0f,
         }
     },
 
     // "Funk Clean" - snappy compression for percussive clean playing,
-    // Wah enabled (rock the "Wah Pedal" parameter while playing), bright
-    // clean amp tone, subtle room reverb only.
+    // Wah enabled (rock the "Wah Pedal" parameter while playing), Amp
+    // Drive kept near unity for a genuinely clean, bright tone, subtle
+    // room reverb only.
     {
         "Funk Clean",
         {
             /* Gate       */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp       */ 1.0f, 1.0f, -22.0f, 5.0f, 3.0f, 60.0f, 4.0f,
-            /* Wah        */ 1.0f, 2.0f, 0.5f, 4.0f,
+            /* Comp       */ 1.0f, 1.0f, -22.0f, 5.0f, 3.0f, 60.0f, 3.0f,
+            /* Wah        */ 1.0f, 2.0f, 0.5f, 4.5f,
             /* Screamer   */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp        */ 5.0f, 2.0f, 0.0f, 1.0f, 3.0f, 0.0f,
+            /* Amp        */ 5.0f, 1.0f, 0.0f, 1.0f, 3.0f, 0.0f,
             /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
             /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
             /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
@@ -169,6 +196,7 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
+            /* Gate Range */ 40.0f,
         }
     },
 };

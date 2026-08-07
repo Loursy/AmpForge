@@ -130,6 +130,7 @@ static const PedalDef kPedalDefs[] =
         { "Thresh",  kParamGateThreshold, -80.0f, 0.0f,    "dB", 1, false },
         { "Attack",  kParamGateAttack,      0.5f, 50.0f,   "ms", 1, false },
         { "Release", kParamGateRelease,    10.0f, 1000.0f, "ms", 0, false },
+        { "Range",   kParamGateRange,       0.0f, 80.0f,   "dB", 0, false },
     }},
     { "Compressor", kParamCompOn,     kParamCompBypass,     kParamCompPosition,  1, Color(175, 120, 225), {
         { "Thresh",  kParamCompThreshold, -60.0f, 0.0f,    "dB", 1, false },
@@ -233,6 +234,7 @@ static const float kBlankPresetValues[kParamCount] =
     /* Bypass x9 */                              0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
     /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
     /* Cabinet    on,pos,mix,level,bypass */        0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
+    /* Gate Range */                                40.0f,
 };
 // clang-format on
 
@@ -372,7 +374,13 @@ protected:
     {
         if (savingPreset)
         {
-            if (nameInputBuffer.size() < 40)
+            // Control characters (Backspace, Delete, Enter, Escape, Tab...)
+            // can arrive here too on some platforms alongside their own
+            // onKeyboard event - appending them as literal bytes fought with
+            // onKeyboard's Backspace handling (it looked like Backspace did
+            // nothing, since the control byte it had just added got popped
+            // right back off). Only printable text belongs in the name.
+            if (ev.character >= 0x20 && ev.character != 0x7f && nameInputBuffer.size() < 40)
                 nameInputBuffer += ev.string;
             repaint();
             return true;
@@ -754,19 +762,41 @@ private:
 
             CustomPreset p;
             std::getline(f, p.name);
-            bool ok = true;
-            for (uint32_t i = 0; i < kParamCount; ++i)
+
+            // Read until ENDPRESET rather than a fixed kParamCount lines,
+            // so a preset saved by an older build (before a new parameter
+            // was appended - new parameters always go at the end, never
+            // inserted, precisely to keep old preset files loadable) still
+            // parses instead of desyncing every preset that follows it in
+            // the file. Anything the old file didn't have falls back to
+            // the same defaults a blank preset uses.
+            //
+            // foundEnd distinguishes "older file, fewer values than
+            // kParamCount, terminated properly" (fine, fill the rest with
+            // defaults below) from "file truncated/corrupted mid-write,
+            // ENDPRESET never appears before EOF" (discard - otherwise a
+            // crash mid-save would leave a bogus empty/default preset
+            // permanently stuck in the list).
+            uint32_t i = 0;
+            bool foundEnd = false;
+            while (std::getline(f, line))
             {
-                if (!std::getline(f, line))
+                if (line == "ENDPRESET")
                 {
-                    ok = false;
+                    foundEnd = true;
                     break;
                 }
-                p.values[i] = std::strtof(line.c_str(), nullptr);
+                if (i < kParamCount)
+                    p.values[i] = std::strtof(line.c_str(), nullptr);
+                ++i;
             }
-            std::getline(f, line); // ENDPRESET
-            if (ok)
+
+            if (foundEnd)
+            {
+                for (uint32_t j = i; j < kParamCount; ++j)
+                    p.values[j] = kBlankPresetValues[j];
                 customPresets.push_back(p);
+            }
         }
     }
 
@@ -1718,8 +1748,15 @@ private:
             const bool isDraggingThis = (pedalIndex == draggingModuleIndex);
             const bool isBypassed = (def.bypassParam >= 0) && (paramValues[def.bypassParam] > 0.5f);
             const float alpha = moduleAlpha[pedalIndex];
-            const float bodyAlpha = (isBypassed ? 0.55f : 1.0f) * alpha;
             const float drawY = y + (1.0f - alpha) * 16.0f; // slide in/out
+
+            // While bypassed, the card stays fully opaque and legible - only
+            // its accent color desaturates to a neutral metal tone (like a
+            // stomp box with its LED dark) and the knob area dims slightly,
+            // rather than the whole card fading into a washed-out ghost of
+            // itself. Much clearer at a glance than a flat opacity cut.
+            const Color cardAccent = isBypassed ? def.accent.asGrayscale() : def.accent;
+            const float knobAlpha = isBypassed ? alpha * 0.72f : alpha;
 
             // Drop shadow, for a bit of depth against the rack background -
             // bigger and darker while being dragged, so the card reads as
@@ -1730,7 +1767,7 @@ private:
             beginPath();
             rect(kModuleLeft - 30.0f, drawY - 15.0f, moduleW + 60.0f, moduleH + 60.0f);
             fillPaint(boxGradient(kModuleLeft, drawY + shadowOffset, moduleW, moduleH, 10.0f, shadowFeather,
-                                   Color(0, 0, 0, shadowAlpha * bodyAlpha), Color(0, 0, 0, 0.0f)));
+                                   Color(0, 0, 0, shadowAlpha * alpha), Color(0, 0, 0, 0.0f)));
             fill();
             closePath();
 
@@ -1738,14 +1775,14 @@ private:
             beginPath();
             roundedRect(kModuleLeft, drawY, moduleW, moduleH, 10.0f);
             fillPaint(linearGradient(kModuleLeft, drawY, kModuleLeft, drawY + moduleH,
-                                      Color(kColorPanel, Color(255, 255, 255), 0.05f).withAlpha(bodyAlpha),
-                                      Color(kColorPanel, Color(0, 0, 0), 0.2f).withAlpha(bodyAlpha)));
+                                      Color(kColorPanel, Color(255, 255, 255), 0.05f).withAlpha(alpha),
+                                      Color(kColorPanel, Color(0, 0, 0), 0.2f).withAlpha(alpha)));
             fill();
             closePath();
             beginPath();
             roundedRect(kModuleLeft, drawY, moduleW, moduleH, 10.0f);
             strokeWidth(1.0f);
-            strokeColor(Color(255, 255, 255, 0.07f * bodyAlpha));
+            strokeColor(Color(255, 255, 255, 0.07f * alpha));
             stroke();
             closePath();
 
@@ -1753,16 +1790,17 @@ private:
             {
                 beginPath();
                 roundedRect(kModuleLeft, drawY, moduleW, moduleH, 10.0f);
-                strokeColor(def.accent.withAlpha(bodyAlpha));
+                strokeColor(cardAccent.withAlpha(alpha));
                 strokeWidth(2.5f);
                 stroke();
                 closePath();
             }
 
-            // Header - glossy top plate in the pedal's accent color.
+            // Header - glossy top plate in the pedal's accent color (grayed
+            // out via cardAccent while bypassed).
             const Paint headerGrad = linearGradient(kModuleLeft, drawY, kModuleLeft, drawY + kModuleHeaderH,
-                                                      Color(def.accent, Color(255, 255, 255), 0.3f).withAlpha(bodyAlpha),
-                                                      Color(def.accent, Color(0, 0, 0), 0.1f).withAlpha(bodyAlpha));
+                                                      Color(cardAccent, Color(255, 255, 255), 0.3f).withAlpha(alpha),
+                                                      Color(cardAccent, Color(0, 0, 0), 0.1f).withAlpha(alpha));
             beginPath();
             roundedRect(kModuleLeft, drawY, moduleW, kModuleHeaderH, 10.0f);
             fillPaint(headerGrad);
@@ -1777,53 +1815,84 @@ private:
             moveTo(kModuleLeft, drawY + kModuleHeaderH);
             lineTo(kModuleLeft + moduleW, drawY + kModuleHeaderH);
             strokeWidth(1.0f);
-            strokeColor(Color(0, 0, 0, 0.3f * bodyAlpha));
+            strokeColor(Color(0, 0, 0, 0.3f * alpha));
             stroke();
             closePath();
 
             fontSize(16.0f);
-            fillColor(kColorTextDark.withAlpha(bodyAlpha));
+            fillColor(kColorTextDark.withAlpha(alpha));
             textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
             textLetterSpacing(0.3f);
             text(kModuleLeft + (pedalIndex == kAmpPedalIndex ? 16.0f : 44.0f), drawY + kModuleHeaderH * 0.5f, def.name, nullptr);
             textLetterSpacing(0.0f);
-
-            if (isBypassed)
-            {
-                fontSize(10.5f);
-                fillColor(kColorTextDark.withAlpha(bodyAlpha));
-                textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
-                text(kModuleLeft + moduleW * 0.5f - 10.0f, drawY + kModuleHeaderH * 0.5f, "BYPASSED", nullptr);
-            }
 
             if (pedalIndex != kAmpPedalIndex)
             {
                 const bool isOn = !isBypassed;
                 const float sx = kModuleLeft + 12.0f;
                 const float sy = drawY + (kModuleHeaderH - kSwitchSize) * 0.5f;
+                const float trackW = kSwitchSize * 1.6f;
 
+                // Soft halo bleeding off the switch while lit, like a real
+                // LED - the main "this is active" cue, so off (no halo) is
+                // unambiguous without needing to dim anything else.
                 if (isOn)
                 {
                     beginPath();
-                    rect(sx - 14.0f, sy - 14.0f, kSwitchSize * 1.6f + 28.0f, kSwitchSize + 28.0f);
-                    fillPaint(radialGradient(sx + kSwitchSize * 0.8f, sy + kSwitchSize * 0.5f, 1.0f, 20.0f,
-                                              kColorOn.withAlpha(0.5f * bodyAlpha), kColorOn.withAlpha(0.0f)));
+                    rect(sx - 14.0f, sy - 14.0f, trackW + 28.0f, kSwitchSize + 28.0f);
+                    fillPaint(radialGradient(sx + trackW * 0.5f, sy + kSwitchSize * 0.5f, 2.0f, 22.0f,
+                                              kColorOn.withAlpha(0.45f * alpha), kColorOn.withAlpha(0.0f)));
                     fill();
                     closePath();
                 }
 
+                // Contact shadow under the track, matching the knobs' depth
+                // treatment so the switch feels like the same hardware family.
                 beginPath();
-                roundedRect(sx, sy, kSwitchSize * 1.6f, kSwitchSize, kSwitchSize * 0.5f);
+                roundedRect(sx, sy + 1.5f, trackW, kSwitchSize, kSwitchSize * 0.5f);
+                fillColor(Color(0, 0, 0, 0.35f * alpha));
+                fill();
+                closePath();
+
+                // Track - glossy when lit, a duller inset groove when not,
+                // so "off" reads as an unpowered switch rather than a faded
+                // copy of the "on" one.
+                beginPath();
+                roundedRect(sx, sy, trackW, kSwitchSize, kSwitchSize * 0.5f);
                 fillPaint(linearGradient(sx, sy, sx, sy + kSwitchSize,
-                                          Color((isOn ? kColorOn : kColorOff), Color(255, 255, 255), 0.25f).withAlpha(bodyAlpha),
-                                          Color(isOn ? kColorOn : kColorOff).withAlpha(bodyAlpha)));
+                                          Color(isOn ? kColorOn : kColorOff, Color(255, 255, 255), isOn ? 0.3f : 0.1f).withAlpha(alpha),
+                                          Color(isOn ? kColorOn : kColorOff, Color(0, 0, 0), isOn ? 0.05f : 0.3f).withAlpha(alpha)));
                 fill();
                 closePath();
                 beginPath();
-                circle(isOn ? sx + kSwitchSize * 1.1f : sx + kSwitchSize * 0.5f,
-                       sy + kSwitchSize * 0.5f, kSwitchSize * 0.4f);
-                fillColor(Color(255, 255, 255, bodyAlpha));
+                roundedRect(sx, sy, trackW, kSwitchSize, kSwitchSize * 0.5f);
+                strokeWidth(1.0f);
+                strokeColor(Color(0, 0, 0, 0.4f * alpha));
+                stroke();
+                closePath();
+
+                // Thumb - a small glossy puck (radial highlight + its own
+                // contact shadow) instead of a flat disc, echoing the same
+                // glossy-metal language as the knob faces.
+                const float thumbCx = isOn ? sx + trackW - kSwitchSize * 0.5f : sx + kSwitchSize * 0.5f;
+                const float thumbCy = sy + kSwitchSize * 0.5f;
+                beginPath();
+                circle(thumbCx, thumbCy + 0.8f, kSwitchSize * 0.42f);
+                fillColor(Color(0, 0, 0, 0.3f * alpha));
                 fill();
+                closePath();
+                beginPath();
+                circle(thumbCx, thumbCy, kSwitchSize * 0.4f);
+                fillPaint(radialGradient(thumbCx - kSwitchSize * 0.12f, thumbCy - kSwitchSize * 0.12f, 0.5f, kSwitchSize * 0.5f,
+                                          Color(255, 255, 255, alpha),
+                                          Color(isOn ? 232 : 200, isOn ? 232 : 200, isOn ? 238 : 208, alpha)));
+                fill();
+                closePath();
+                beginPath();
+                circle(thumbCx, thumbCy, kSwitchSize * 0.4f);
+                strokeWidth(0.75f);
+                strokeColor(Color(0, 0, 0, 0.25f * alpha));
+                stroke();
                 closePath();
 
                 // A neutral dark chip rather than a permanently red one - a
@@ -1835,31 +1904,68 @@ private:
                 const bool removeHovered = (lastMouseX >= rx - 4.0f && lastMouseX <= rx + kRemoveSize + 4.0f &&
                                              lastMouseY >= ry - 4.0f && lastMouseY <= ry + kRemoveSize + 4.0f);
 
+                // Bypass status chip, sitting between the name and the
+                // remove button - a proper pill badge (dark fill, faint
+                // border, unlit dot echoing the switch's own LED language)
+                // instead of bare text crammed into the header.
+                if (isBypassed)
+                {
+                    const float chipH = kSwitchSize;
+                    const float chipW = 78.0f;
+                    const float chipX = rx - chipW - 10.0f;
+                    const float chipY = drawY + (kModuleHeaderH - chipH) * 0.5f;
+
+                    beginPath();
+                    roundedRect(chipX, chipY, chipW, chipH, chipH * 0.5f);
+                    fillColor(Color(0, 0, 0, 0.3f * alpha));
+                    fill();
+                    closePath();
+                    beginPath();
+                    roundedRect(chipX, chipY, chipW, chipH, chipH * 0.5f);
+                    strokeWidth(1.0f);
+                    strokeColor(Color(255, 255, 255, 0.12f * alpha));
+                    stroke();
+                    closePath();
+
+                    beginPath();
+                    circle(chipX + 14.0f, chipY + chipH * 0.5f, 3.0f);
+                    fillColor(Color(255, 255, 255, 0.25f * alpha));
+                    fill();
+                    closePath();
+
+                    fontSize(9.5f);
+                    fillColor(kColorTextMuted.withAlpha(alpha));
+                    textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+                    textLetterSpacing(0.5f);
+                    text(chipX + 23.0f, chipY + chipH * 0.5f + 0.5f, "BYPASS", nullptr);
+                    textLetterSpacing(0.0f);
+                }
+
                 beginPath();
                 circle(rx + kRemoveSize * 0.5f, ry + kRemoveSize * 0.5f, kRemoveSize * 0.5f);
                 fillPaint(removeHovered
                     ? radialGradient(rx + kRemoveSize * 0.35f, ry + kRemoveSize * 0.35f, 0.5f, kRemoveSize * 0.7f,
-                                      Color(kColorRemove, Color(255, 255, 255), 0.3f).withAlpha(bodyAlpha),
-                                      kColorRemove.withAlpha(bodyAlpha))
+                                      Color(kColorRemove, Color(255, 255, 255), 0.3f).withAlpha(alpha),
+                                      kColorRemove.withAlpha(alpha))
                     : radialGradient(rx + kRemoveSize * 0.35f, ry + kRemoveSize * 0.35f, 0.5f, kRemoveSize * 0.7f,
-                                      Color(0, 0, 0, 0.35f * bodyAlpha), Color(0, 0, 0, 0.55f * bodyAlpha)));
+                                      Color(0, 0, 0, 0.35f * alpha), Color(0, 0, 0, 0.55f * alpha)));
                 fill();
                 closePath();
                 beginPath();
                 circle(rx + kRemoveSize * 0.5f, ry + kRemoveSize * 0.5f, kRemoveSize * 0.5f);
                 strokeWidth(1.0f);
-                strokeColor(Color(255, 255, 255, (removeHovered ? 0.4f : 0.22f) * bodyAlpha));
+                strokeColor(Color(255, 255, 255, (removeHovered ? 0.4f : 0.22f) * alpha));
                 stroke();
                 closePath();
                 fontSize(11.0f);
-                fillColor(Color(255, 255, 255, bodyAlpha * (removeHovered ? 1.0f : 0.8f)));
+                fillColor(Color(255, 255, 255, alpha * (removeHovered ? 1.0f : 0.8f)));
                 textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
                 text(rx + kRemoveSize * 0.5f, ry + kRemoveSize * 0.5f + 1.0f, "x", nullptr);
             }
             else
             {
                 fontSize(10.5f);
-                fillColor(kColorTextDark.withAlpha(bodyAlpha));
+                fillColor(kColorTextDark.withAlpha(alpha));
                 textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
                 textLetterSpacing(0.4f);
                 text(kModuleLeft + moduleW - 12.0f, drawY + kModuleHeaderH * 0.5f, "ALWAYS ON", nullptr);
@@ -1873,12 +1979,12 @@ private:
                 const KnobDef& knob = def.knobs[k];
                 const bool isDraggingKnob = (pedalIndex == draggingKnobPedal && static_cast<int>(k) == draggingKnobIndex);
                 const bool isEditingKnob = (pedalIndex == editingKnobPedal && static_cast<int>(k) == editingKnobIndex);
-                drawKnob(knobX, knobCenterY, knob, displayValues[knob.paramIndex], def.accent, bodyAlpha, isDraggingKnob, isEditingKnob);
+                drawKnob(knobX, knobCenterY, knob, displayValues[knob.paramIndex], cardAccent, knobAlpha, isDraggingKnob, isEditingKnob);
                 knobX += kKnobSpacing;
             }
 
             if (def.hasFileLoader)
-                drawFileLoaderButton(knobX, knobCenterY, def, bodyAlpha);
+                drawFileLoaderButton(knobX, knobCenterY, def, knobAlpha);
     }
 
     // The "Load..." button on a file-loader pedal card (currently just
