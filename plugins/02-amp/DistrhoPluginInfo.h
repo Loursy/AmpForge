@@ -3,7 +3,7 @@
 
 #define DISTRHO_PLUGIN_BRAND   "AmpForge"
 #define DISTRHO_PLUGIN_NAME    "AmpForge Amp"
-#define DISTRHO_PLUGIN_URI     "https://github.com/atakan/ampforge/amp"
+#define DISTRHO_PLUGIN_URI     "https://github.com/Loursy/ampforge/amp"
 #define DISTRHO_PLUGIN_CLAP_ID "com.ampforge.amp"
 
 #define DISTRHO_PLUGIN_BRAND_ID  Ampf

@@ -4,7 +4,7 @@
 // Plugin identity - brand/name, how it will show up in hosts/formats
 #define DISTRHO_PLUGIN_BRAND   "AmpForge"
 #define DISTRHO_PLUGIN_NAME    "AmpForge Gain"
-#define DISTRHO_PLUGIN_URI     "https://github.com/atakan/ampforge/gain"
+#define DISTRHO_PLUGIN_URI     "https://github.com/Loursy/ampforge/gain"
 #define DISTRHO_PLUGIN_CLAP_ID "com.ampforge.gain"
 
 // Every plugin needs its own unique 4-character ID
