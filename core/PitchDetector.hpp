@@ -54,18 +54,22 @@ public:
         maxLag = std::min(maxLag, windowSize / 2); // stay well inside the window
 
         buffer.assign(windowSize, 0.0f);
-        // Pre-sized here (not left for analyze()'s first resize() call) so
-        // that first call doesn't allocate on the audio thread.
+        // Pre-sized here (not left for beginAnalysis()'s first resize()
+        // call) so that first call doesn't allocate on the audio thread.
         linear.assign(windowSize, 0.0f);
         corr.assign(maxLag + 2, 0.0f);
         writeIndex = 0;
         samplesSinceAnalysis = 0;
+        analysisInProgress = false;
         frequencyHz = 0.0f;
         confident = false;
+        candidateStreak = 0;
     }
 
-    // Feed one (mono) sample. Cheap - just a ring-buffer write - except
-    // once every hopSize samples, when analyze() runs.
+    // Feed one (mono) sample. Cheap - just a ring-buffer write, plus at
+    // most one autocorrelation lag's worth of work (see stepAnalysis()'s
+    // comment on why it's spread out like this instead of running the
+    // whole pass in one go every hopSize samples).
     void pushSample(float sample)
     {
         if (buffer.empty())
@@ -77,8 +81,10 @@ public:
         if (++samplesSinceAnalysis >= hopSize)
         {
             samplesSinceAnalysis = 0;
-            analyze();
+            beginAnalysis();
         }
+
+        stepAnalysis();
     }
 
     // 0.0f when no clear pitch has been found yet (silence, noise, or
@@ -87,7 +93,11 @@ public:
     bool isConfident() const { return confident; }
 
 private:
-    void analyze()
+    // Snapshots the window and DC-removes it (both O(windowSize), cheap
+    // on their own) and decides whether there's enough signal to bother
+    // with the expensive part - the actual per-lag autocorrelation, which
+    // stepAnalysis() does incrementally from here.
+    void beginAnalysis()
     {
         // Unrolled into linear (oldest-to-newest) order so the
         // correlation loop below can index it directly instead of
@@ -104,18 +114,70 @@ private:
         mean /= static_cast<float>(windowSize);
         for (float& s : linear) s -= mean;
 
-        // Not enough signal to bother analyzing (e.g. muted strings,
-        // gated silence) - leave the last result in place rather than
-        // reporting a noisy near-zero-lag false positive.
+        // Not enough signal to bother analyzing (e.g. muted/untouched
+        // strings) - leave the last result in place rather than reporting
+        // a note found in whatever's left: interface self-noise, hiss,
+        // room noise picked up by the pickups, etc. kSilenceRmsSquared is
+        // an RMS-level threshold (roughly -50dBFS - well above any normal
+        // noise floor, even amplified by a hot Input Gain setting for a
+        // passive pickup, but comfortably below an actually plucked
+        // string) rather than a raw energy total, so it means the same
+        // thing regardless of windowSize - i.e. regardless of the host's
+        // sample rate.
         float energy = 0.0f;
         for (float s : linear) energy += s * s;
-        if (energy < kSilenceEnergyThreshold)
+        if (energy < kSilenceRmsSquared * static_cast<float>(windowSize))
         {
             confident = false;
+            analysisInProgress = false;
+            candidateStreak = 0;
             return;
         }
 
-        const float r0 = autocorrelate(0);
+        cachedR0 = autocorrelate(0);
+
+        // Filled from minLag-1 through maxLag+1 (not just [minLag,maxLag])
+        // so the neighbor lookups in finishAnalysis() (corr[lag-1]/corr[lag+1])
+        // are always this pass's real values, never a stale/zero leftover
+        // from corr[]'s persistent scratch buffer. Computed one lag per
+        // pushSample() call (see stepAnalysis()) rather than all at once
+        // here.
+        nextLag = minLag - 1;
+        lastLag = maxLag + 1;
+        analysisInProgress = true;
+    }
+
+    // Computes exactly one autocorrelation lag per call. A full pass is
+    // O(windowSize * numLags) - measured to peg an entire audio-thread
+    // core when done in one blocking call every hopSize samples, since
+    // that one call's runtime could exceed the host's per-block real-time
+    // budget and cause dropouts. numLags is comfortably smaller than
+    // hopSize across the guitar/bass range this class covers (see
+    // setSampleRate()), so pacing it at one lag per incoming sample still
+    // finishes well before the next hop boundary - same total work as
+    // before, just spread evenly across every sample's processing instead
+    // of dumped into one call.
+    void stepAnalysis()
+    {
+        if (!analysisInProgress)
+            return;
+
+        corr[nextLag] = autocorrelate(nextLag);
+
+        if (nextLag == lastLag)
+        {
+            analysisInProgress = false;
+            finishAnalysis();
+        }
+        else
+        {
+            ++nextLag;
+        }
+    }
+
+    void finishAnalysis()
+    {
+        const float r0 = cachedR0;
 
         // First local maximum whose correlation is a strong-enough
         // fraction of r0 wins outright (see the class comment on why
@@ -124,13 +186,6 @@ private:
         size_t bestLag = minLag;
         float bestCorr = -1.0f;
         size_t chosenLag = 0;
-
-        // Filled from minLag-1 through maxLag+1 (not just [minLag,maxLag])
-        // so the neighbor lookups in the loop below (corr[lag-1]/corr[lag+1])
-        // are always this pass's real values, never a stale/zero leftover
-        // from corr[]'s persistent scratch buffer.
-        for (size_t lag = minLag - 1; lag <= maxLag + 1; ++lag)
-            corr[lag] = autocorrelate(lag);
 
         for (size_t lag = minLag; lag <= maxLag; ++lag)
         {
@@ -148,10 +203,31 @@ private:
         if (chosenLag == 0)
             chosenLag = bestLag;
 
+        // Octave-too-high correction: a real string's even harmonics can
+        // make the *first* strong peak land at half the true period - the
+        // fundamental and every harmonic all correlate maximally at
+        // lag = trueperiod (and its multiples), but a dominant 2nd
+        // harmonic on its own also correlates strongly at half that lag,
+        // and since the scan above runs from short lags (high frequency)
+        // upward, it hits that false half-period peak first. If doubling
+        // chosenLag lands on a correlation that's at least as strong,
+        // that's the real giveaway - the true fundamental's period is the
+        // doubled one, not this one. Repeated in case more than one
+        // octave's worth of even-harmonic energy is fooling it. Bounded to
+        // maxLag (not maxLag+1) so chosenLag stays in [minLag,maxLag] -
+        // the same range the loop above guarantees - since the parabolic
+        // interpolation below reads corr[chosenLag+1], and corr[] only
+        // goes up to index maxLag+1.
+        while (chosenLag * 2 <= maxLag && corr[chosenLag * 2] >= corr[chosenLag] && corr[chosenLag * 2] > kPeakThreshold * r0)
+            chosenLag *= 2;
+
         const float confidenceRatio = (r0 > 0.0f) ? (corr[chosenLag] / r0) : 0.0f;
         confident = confidenceRatio > kConfidenceThreshold;
         if (!confident)
+        {
+            candidateStreak = 0;
             return;
+        }
 
         // Parabolic interpolation across (chosenLag-1, chosenLag, chosenLag+1)
         // for a fractional-sample lag estimate - without it, frequency
@@ -164,8 +240,37 @@ private:
         const float shift = (std::fabs(denom) > 1e-9f) ? 0.5f * (yLeft - yRight) / denom : 0.0f;
         const float interpolatedLag = static_cast<float>(chosenLag) + std::clamp(shift, -1.0f, 1.0f);
 
-        if (interpolatedLag > 0.0f)
-            frequencyHz = static_cast<float>(sampleRate) / interpolatedLag;
+        if (interpolatedLag <= 0.0f)
+            return;
+
+        const float rawFrequencyHz = static_cast<float>(sampleRate) / interpolatedLag;
+
+        // Lock-and-hold: a single hop landing on a competing candidate
+        // (a harmonic that briefly out-scored the fundamental, a pick
+        // transient) shouldn't yank the displayed note around - a median
+        // alone doesn't fully fix that, since a reading that keeps
+        // alternating between two candidates can still flip the median
+        // every other hop. So a new candidate has to repeat within
+        // kLockToleranceRatio of itself for kLockStreak consecutive hops
+        // before it actually updates frequencyHz; until then the
+        // previous locked note (or nothing, right after a gap - see the
+        // confident=false paths' reset of candidateStreak) keeps
+        // showing instead of flickering through every raw guess. Once
+        // locked, it keeps gently tracking the note (pitch bends,
+        // vibrato) rather than freezing.
+        if (candidateStreak == 0 || std::fabs(rawFrequencyHz - candidateFreq) > candidateFreq * kLockToleranceRatio)
+        {
+            candidateFreq = rawFrequencyHz;
+            candidateStreak = 1;
+        }
+        else
+        {
+            candidateFreq += (rawFrequencyHz - candidateFreq) * 0.5f;
+            ++candidateStreak;
+        }
+
+        if (candidateStreak >= kLockStreak)
+            frequencyHz = candidateFreq;
     }
 
     // Plain (unnormalized) autocorrelation at a given lag: how strongly
@@ -185,7 +290,9 @@ private:
     static constexpr float kWindowSeconds = 0.09f; // ~90ms: several periods even at the lowest note
     static constexpr float kPeakThreshold = 0.35f;        // vs r0, for early-exit "first peak" search
     static constexpr float kConfidenceThreshold = 0.45f;  // vs r0, for accepting the final chosen lag
-    static constexpr float kSilenceEnergyThreshold = 1e-6f;
+    static constexpr float kSilenceRmsSquared = 1e-5f;    // ~-50dBFS RMS - see beginAnalysis()'s comment
+    static constexpr float kLockToleranceRatio = 0.03f;   // vs the candidate - see finishAnalysis()'s comment
+    static constexpr int kLockStreak = 3;                  // consecutive agreeing hops needed to lock
 
     double sampleRate = 44100.0;
     size_t windowSize = 0, hopSize = 0;
@@ -198,8 +305,22 @@ private:
     std::vector<float> linear;      // scratch: buffer unwrapped into time order
     std::vector<float> corr;        // scratch: correlation per lag
 
+    // Incremental-analysis state - see stepAnalysis()'s comment on why
+    // one pass is spread across many pushSample() calls instead of run
+    // in one go.
+    bool analysisInProgress = false;
+    size_t nextLag = 0, lastLag = 0;
+    float cachedR0 = 0.0f;
+
     float frequencyHz = 0.0f;
     bool confident = false;
+
+    // Lock-and-hold state for the reported frequency - see
+    // finishAnalysis()'s comment. Reset (candidateStreak = 0) whenever a
+    // hop isn't confident, so a fresh run of confident readings after a
+    // gap has to earn its own lock instead of inheriting a stale streak.
+    float candidateFreq = 0.0f;
+    int candidateStreak = 0;
 };
 
 } // namespace ampforge
