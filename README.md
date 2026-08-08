@@ -20,8 +20,13 @@ Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
   page](https://github.com/Loursy/AmpForge/releases/latest) and run
   `AmpForge-Setup.exe` - it installs VST3/CLAP/LV2 straight to the
   standard locations your DAW already scans, no manual file copying.
-- **Linux**: no prebuilt binaries yet - build it yourself from source
-  (see below), it only takes a few minutes.
+- **Linux**: grab the `AmpForge-<version>-linux-x86_64.tar.gz` tarball
+  from the same [Releases page](https://github.com/Loursy/AmpForge/releases/latest),
+  extract it, and run `./install.sh` - installs VST3/CLAP/LV2 and the
+  standalone binary into your home directory (`~/.vst3`, `~/.clap`,
+  `~/.lv2`, `~/.local/bin`), no root/sudo needed. `./install.sh
+  --uninstall` removes them again. Prefer to build it yourself instead?
+  See below - it only takes a few minutes.
 
 ## Features
 
@@ -116,6 +121,12 @@ itself**, the actual product). All the output ends up under
 `build/bin/`.
 
 ### 3. Install
+
+Built it yourself and just want it installed, without copying each
+format by hand below? `installer/linux/install.sh` does exactly the
+same copies in one step - run it straight from the repo root
+(`installer/linux/install.sh`) once `build/bin/` exists, or
+`installer/linux/install.sh --uninstall` to remove it again.
 
 **LV2** (for Carla, Ardour, Qtractor, and most Linux LV2 hosts):
 
