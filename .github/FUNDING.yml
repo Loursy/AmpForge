@@ -1,1 +1,6 @@
+# Shows a "Sponsor" button on the repo page, linking to
+# github.com/sponsors/Loursy - only works because that account has an
+# active GitHub Sponsors profile; the button silently disappears if it
+# ever doesn't (GitHub validates this server-side, not from this file
+# alone).
 github: [Loursy]
