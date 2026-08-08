@@ -14,6 +14,15 @@ built from that same codebase by cross-compiling with mingw-w64 (see
 Linux has never really had a good, free, actively-developed answer to
 Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
 
+## Download
+
+- **Windows**: grab the installer from the [Releases
+  page](https://github.com/Loursy/AmpForge/releases/latest) and run
+  `AmpForge-Setup.exe` - it installs VST3/CLAP/LV2 straight to the
+  standard locations your DAW already scans, no manual file copying.
+- **Linux**: no prebuilt binaries yet - build it yourself from source
+  (see below), it only takes a few minutes.
+
 ## Features
 
 - **12 internal modules**, freely reorderable at runtime: Noise Gate,
@@ -172,8 +181,12 @@ mkdir build-windows && cd build-windows
 cmake .. -G Ninja \
     -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-mingw64.cmake \
     -DCMAKE_BUILD_TYPE=Release
-ninja ampforge_main-vst3 ampforge_main.clap ampforge_main-lv2
+ninja ampforge_main-vst3 ampforge_main.clap ampforge_main-lv2 ampforge_main-lv2-ui
 ```
+
+(`ampforge_main-lv2-ui` isn't optional - the LV2 DSP and UI are separate
+ninja targets, and skipping the second one silently produces an LV2
+bundle with no custom UI DLL in it at all.)
 
 The output lands in `build-windows/bin/`, in the same
 `ampforge_main.vst3` / `ampforge_main.clap` / `ampforge_main.lv2`
@@ -185,18 +198,42 @@ it needs a Windows-native SDL2/audio-backend build that isn't set up
 in this cross-compile path yet (see [Project status](#project-status)).
 VST3/CLAP/LV2 inside a DAW don't need it.
 
-### 3. Install on Windows
+### 3. Build the Windows installer (on your Linux machine)
 
-Copy the folders/files built in step 2 (from `build-windows/bin/` on
-your Linux machine) over to the Windows machine, to wherever your host
-looks for plugins, e.g.:
+A Windows user shouldn't have to manually copy plugin folders into
+`Program Files` themselves - `installer/windows/ampforge.nsi` packages
+step 2's output into a real, double-clickable `AmpForge-Setup.exe`
+using [NSIS](https://nsis.sourceforge.io/), the same way most
+commercial plugin installers are built. On Arch/CachyOS, NSIS itself is
+AUR-only (`yay -S nsis`); Debian/Ubuntu have it as `sudo apt install
+nsis`. Once installed:
+
+```bash
+makensis installer/windows/ampforge.nsi
+```
+
+This produces `build-windows/AmpForge-0.1.0-Setup.exe`. Hand that one
+file to a Windows user - running it (as administrator, since it
+installs to `Program Files\Common Files`) lets them pick which of
+VST3/CLAP/LV2 to install via checkboxes, installs each to the standard
+per-machine location their host already scans, and registers a proper
+uninstaller in Windows' "Add or Remove Programs". No manual file
+copying, no `%COMMONPROGRAMFILES%`/`%APPDATA%` path-hunting.
+
+### Alternative: install by hand
+
+If you'd rather skip the installer (e.g. a per-user LV2 install with no
+admin rights), copy the folders/files from `build-windows/bin/` over to
+the Windows machine yourself, to wherever your host looks for plugins:
 
 - **VST3**: `%COMMONPROGRAMFILES%\VST3\` (typically
   `C:\Program Files\Common Files\VST3\`)
 - **CLAP**: `%COMMONPROGRAMFILES%\CLAP\` (typically
   `C:\Program Files\Common Files\CLAP\`)
-- **LV2**: `%APPDATA%\LV2\` for a per-user install, or check your LV2
-  host's own documentation for its scan paths
+- **LV2**: `%APPDATA%\LV2\` for a per-user install (no admin needed),
+  or `%COMMONPROGRAMFILES%\LV2\` machine-wide (matches what the
+  installer above uses) - or check your LV2 host's own documentation
+  for its scan paths
 
 Rescan plugins in your host afterward, the same as on Linux.
 
@@ -273,9 +310,9 @@ Known gaps, tracked for future work:
   those against mingw-w64 isn't set up yet, so there's no Windows
   standalone `.exe` for now (VST3/CLAP/LV2 inside a DAW cover the
   overwhelming majority of Windows use anyway).
-- No CI/release pipeline yet - Windows binaries are built locally by
-  hand via the cross-compile steps above, not published as downloadable
-  releases.
+- No CI pipeline yet - each Windows release is still built and uploaded
+  locally by hand via the cross-compile + installer steps above, not
+  automated on every push/tag.
 
 ## Contributing
 
