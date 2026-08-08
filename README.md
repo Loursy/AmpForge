@@ -1,32 +1,31 @@
 # AmpForge
 
-**A free, open-source guitar amp simulator plugin, developed on Linux
-and also cross-compiled for Windows.**
+**A free, open-source guitar amp simulator plugin for Linux.**
 
 AmpForge is a single plugin — not a chain of separate plugins bolted
 together in a DAW — that hosts a full, reorderable pedalboard-and-amp
-chain internally, in the spirit of Guitar Rig / BIAS FX. On Linux it
-ships as **VST3**, **LV2**, **CLAP**, and a **JACK/PipeWire standalone**
-app, all built from one codebase; **VST3/LV2/CLAP for Windows** are
-built from that same codebase by cross-compiling with mingw-w64 (see
-[Building for Windows](#building-for-windows-cross-compile) below).
+chain internally, in the spirit of Guitar Rig / BIAS FX. It ships as
+**VST3**, **LV2**, **CLAP**, and a **JACK/PipeWire standalone** app,
+all built from one codebase. A **Windows installer** (VST3/CLAP/LV2,
+cross-compiled from the same codebase) is also available for Windows
+users - see [Download](#download) below.
 
 Linux has never really had a good, free, actively-developed answer to
 Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
 
 ## Download
 
-- **Windows**: grab the installer from the [Releases
-  page](https://github.com/Loursy/AmpForge/releases/latest) and run
-  `AmpForge-Setup.exe` - it installs VST3/CLAP/LV2 straight to the
-  standard locations your DAW already scans, no manual file copying.
-- **Linux**: grab the `AmpForge-<version>-linux-x86_64.tar.gz` tarball
-  from the same [Releases page](https://github.com/Loursy/AmpForge/releases/latest),
-  extract it, and run `./install.sh` - installs VST3/CLAP/LV2 and the
-  standalone binary into your home directory (`~/.vst3`, `~/.clap`,
-  `~/.lv2`, `~/.local/bin`), no root/sudo needed. `./install.sh
-  --uninstall` removes them again. Prefer to build it yourself instead?
-  See below - it only takes a few minutes.
+Grab the latest tarball from the [Releases
+page](https://github.com/Loursy/AmpForge/releases/latest), extract it,
+and run `./install.sh` - installs VST3/CLAP/LV2 and the standalone
+binary into your home directory (`~/.vst3`, `~/.clap`, `~/.lv2`,
+`~/.local/bin`), no root/sudo needed. `./install.sh --uninstall`
+removes them again. Prefer to build it yourself, or install each
+format individually? See [Building from source](#building-from-source)
+below.
+
+(Windows users: an installer - `AmpForge-Setup.exe` - is also on the
+same [Releases page](https://github.com/Loursy/AmpForge/releases/latest).)
 
 ## Features
 
@@ -74,11 +73,10 @@ Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
 
 ## Building from source
 
-There are no prebuilt binaries yet — you build it yourself. It's a
-standard CMake + Ninja project and only takes a few minutes. This
-section covers the native Linux build; see [Building for Windows
-(cross-compile)](#building-for-windows-cross-compile) further down if
-you want the Windows VST3/CLAP/LV2 instead.
+Prefer building it yourself over the [prebuilt
+tarball](#download) - e.g. to install just one plugin format, or to
+track the latest commit? It's a standard CMake + Ninja project and
+only takes a few minutes.
 
 ### 1. Install prerequisites
 
@@ -158,96 +156,6 @@ cp -r build/bin/ampforge_main.clap ~/.clap/
 ./build/bin/ampforge_main
 ```
 
-## Building for Windows (cross-compile)
-
-AmpForge doesn't need a Windows machine to build a Windows plugin -
-mingw-w64 cross-compiles VST3, CLAP, and LV2 straight from the same
-Linux checkout, into real PE32+ Windows binaries. **Steps 1 and 2 below
-run on your Linux machine, same as the native build above** - the only
-part that touches a Windows machine at all is copying the finished
-files over in step 3.
-
-### 1. Install the mingw-w64 toolchain (on your Linux machine)
-
-**Arch / CachyOS / Manjaro:**
-
-```bash
-sudo pacman -S --needed mingw-w64-gcc mingw-w64-binutils \
-    mingw-w64-headers mingw-w64-crt mingw-w64-winpthreads
-```
-
-**Debian / Ubuntu:**
-
-```bash
-sudo apt install mingw-w64
-```
-
-### 2. Configure and build (on your Linux machine)
-
-Use a separate build directory and point `CMAKE_TOOLCHAIN_FILE` at
-`cmake/toolchain-mingw64.cmake` (included in this repo):
-
-```bash
-mkdir build-windows && cd build-windows
-cmake .. -G Ninja \
-    -DCMAKE_TOOLCHAIN_FILE=../cmake/toolchain-mingw64.cmake \
-    -DCMAKE_BUILD_TYPE=Release
-ninja ampforge_main-vst3 ampforge_main.clap ampforge_main-lv2 ampforge_main-lv2-ui
-```
-
-(`ampforge_main-lv2-ui` isn't optional - the LV2 DSP and UI are separate
-ninja targets, and skipping the second one silently produces an LV2
-bundle with no custom UI DLL in it at all.)
-
-The output lands in `build-windows/bin/`, in the same
-`ampforge_main.vst3` / `ampforge_main.clap` / `ampforge_main.lv2`
-layout as the Linux build, just with `.dll`-based Windows binaries
-inside instead of `.so`.
-
-The standalone (`ampforge_main-jack`) target isn't part of this list -
-it needs a Windows-native SDL2/audio-backend build that isn't set up
-in this cross-compile path yet (see [Project status](#project-status)).
-VST3/CLAP/LV2 inside a DAW don't need it.
-
-### 3. Build the Windows installer (on your Linux machine)
-
-A Windows user shouldn't have to manually copy plugin folders into
-`Program Files` themselves - `installer/windows/ampforge.nsi` packages
-step 2's output into a real, double-clickable `AmpForge-Setup.exe`
-using [NSIS](https://nsis.sourceforge.io/), the same way most
-commercial plugin installers are built. On Arch/CachyOS, NSIS itself is
-AUR-only (`yay -S nsis`); Debian/Ubuntu have it as `sudo apt install
-nsis`. Once installed:
-
-```bash
-makensis installer/windows/ampforge.nsi
-```
-
-This produces `build-windows/AmpForge-0.1.0-Setup.exe`. Hand that one
-file to a Windows user - running it (as administrator, since it
-installs to `Program Files\Common Files`) lets them pick which of
-VST3/CLAP/LV2 to install via checkboxes, installs each to the standard
-per-machine location their host already scans, and registers a proper
-uninstaller in Windows' "Add or Remove Programs". No manual file
-copying, no `%COMMONPROGRAMFILES%`/`%APPDATA%` path-hunting.
-
-### Alternative: install by hand
-
-If you'd rather skip the installer (e.g. a per-user LV2 install with no
-admin rights), copy the folders/files from `build-windows/bin/` over to
-the Windows machine yourself, to wherever your host looks for plugins:
-
-- **VST3**: `%COMMONPROGRAMFILES%\VST3\` (typically
-  `C:\Program Files\Common Files\VST3\`)
-- **CLAP**: `%COMMONPROGRAMFILES%\CLAP\` (typically
-  `C:\Program Files\Common Files\CLAP\`)
-- **LV2**: `%APPDATA%\LV2\` for a per-user install (no admin needed),
-  or `%COMMONPROGRAMFILES%\LV2\` machine-wide (matches what the
-  installer above uses) - or check your LV2 host's own documentation
-  for its scan paths
-
-Rescan plugins in your host afterward, the same as on Linux.
-
 ## Using it
 
 - **In Reaper**: add it from the FX browser like any other VST3 or CLAP
@@ -316,13 +224,13 @@ Known gaps, tracked for future work:
   enough for a single instance at the IR lengths a speaker cab actually
   needs (capped at 4096 samples), but a future optimization opportunity
   if that ever changes.
-- The Windows cross-compile only covers VST3/CLAP/LV2 - the standalone
-  app pulls in SDL2/RtAudio for its audio backend, and cross-compiling
-  those against mingw-w64 isn't set up yet, so there's no Windows
-  standalone `.exe` for now (VST3/CLAP/LV2 inside a DAW cover the
-  overwhelming majority of Windows use anyway).
-- No CI pipeline yet - each Windows release is still built and uploaded
-  locally by hand via the cross-compile + installer steps above, not
+- The Windows installer only covers VST3/CLAP/LV2 - the standalone app
+  pulls in SDL2/RtAudio for its audio backend, and cross-compiling
+  those for Windows isn't set up yet, so there's no Windows standalone
+  `.exe` for now (VST3/CLAP/LV2 inside a DAW cover the overwhelming
+  majority of Windows use anyway).
+- No CI pipeline yet - every release (Linux tarball and Windows
+  installer alike) is still built and uploaded locally by hand, not
   automated on every push/tag.
 
 ## Contributing
