@@ -67,6 +67,10 @@ SectionEnd
 
 Section -Uninstaller
   SetOutPath "$INSTDIR"
+  ; DPF and what it bundles (pugl, NanoVG, a fallback font, CLAP/LV2
+  ; headers) are compiled directly into the plugin binaries above -
+  ; their permissive licenses require this notice to travel with them.
+  File "..\..\THIRD-PARTY-NOTICES.md"
   WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayName" "${PRODUCT_NAME}"
   WriteRegStr HKLM "${UNINSTALL_KEY}" "DisplayVersion" "${PRODUCT_VERSION}"
@@ -91,6 +95,7 @@ Section "Uninstall"
   Delete "$COMMONFILES64\CLAP\ampforge_main.clap"
   RMDir /r "$COMMONFILES64\LV2\ampforge_main.lv2"
   Delete "$INSTDIR\Uninstall.exe"
+  Delete "$INSTDIR\THIRD-PARTY-NOTICES.md"
   RMDir "$INSTDIR"
   DeleteRegKey HKLM "${UNINSTALL_KEY}"
 SectionEnd

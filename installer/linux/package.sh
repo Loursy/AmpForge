@@ -32,7 +32,7 @@ done
 
 cp "$REPO_ROOT/installer/linux/install.sh" "$STAGE_DIR/"
 chmod +x "$STAGE_DIR/install.sh"
-cp "$REPO_ROOT/LICENSE" "$STAGE_DIR/"
+cp "$REPO_ROOT/LICENSE" "$REPO_ROOT/THIRD-PARTY-NOTICES.md" "$STAGE_DIR/"
 
 tar -C "$REPO_ROOT/build" -czf "$REPO_ROOT/build/${OUT_NAME}.tar.gz" "$OUT_NAME"
 rm -rf "$STAGE_DIR"

@@ -246,3 +246,9 @@ Issues and pull requests are welcome. The codebase is organized as:
 ## License
 
 GPL-3.0-or-later — see [LICENSE](LICENSE).
+
+Built on [DPF](https://github.com/DISTRHO/DPF) and what it bundles
+(pugl, NanoVG, a fallback font, and the CLAP/LV2 interface headers) -
+all permissively licensed, see
+[THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) for the full text of
+each.

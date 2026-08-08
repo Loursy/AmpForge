@@ -1,5 +1,9 @@
 Copyright (C) 2026 Atakan Ünsever
 
+This project bundles third-party permissively-licensed software (DPF
+and what it in turn bundles) - see THIRD-PARTY-NOTICES.md, that
+software's own license terms apply to it, not the GPL below.
+
                     GNU GENERAL PUBLIC LICENSE
                        Version 3, 29 June 2007
 
