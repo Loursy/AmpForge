@@ -1041,11 +1041,19 @@ protected:
         // than precomputed, since it depends on this call's block size,
         // which hosts are free to vary from call to call (unlike the
         // sample rate, which sampleRateChanged() tells us about up front).
-        const float elapsedSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - processStart).count();
-        const float blockSec = static_cast<float>(frames) / static_cast<float>(getSampleRate());
-        const float rawLoad = std::min(elapsedSec / blockSec, 1.0f);
-        const float cpuLoadDecay = std::exp(-blockSec / kCpuMeterDecayTauSec);
-        cpuLoad = (rawLoad > cpuLoad) ? rawLoad : cpuLoad * cpuLoadDecay;
+        // Some hosts call run() with frames == 0 (e.g. a parameter-only or
+        // latency-compensation flush block) - nothing was actually
+        // processed, so leave the meter as-is instead of dividing by a
+        // zero blockSec (which would otherwise read back as a spurious
+        // 100% load).
+        if (frames > 0)
+        {
+            const float elapsedSec = std::chrono::duration<float>(std::chrono::steady_clock::now() - processStart).count();
+            const float blockSec = static_cast<float>(frames) / static_cast<float>(getSampleRate());
+            const float rawLoad = std::min(elapsedSec / blockSec, 1.0f);
+            const float cpuLoadDecay = std::exp(-blockSec / kCpuMeterDecayTauSec);
+            cpuLoad = (rawLoad > cpuLoad) ? rawLoad : cpuLoad * cpuLoadDecay;
+        }
     }
 
 private:

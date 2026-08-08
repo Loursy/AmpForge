@@ -1,5 +1,6 @@
 dpf_add_plugin(ampforge_main
   TARGETS jack lv2 vst3 clap
+  USE_FILE_BROWSER
   FILES_DSP
     ChainPlugin.cpp
   FILES_UI

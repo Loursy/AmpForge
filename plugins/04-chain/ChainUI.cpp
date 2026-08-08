@@ -307,6 +307,23 @@ protected:
         repaint();
     }
 
+    // A host's own program/preset browser (VST3, CLAP and LV2 hosts can all
+    // expose one, alongside our own in-UI dropdown) can switch presets too,
+    // via ChainPlugin::loadProgram() - each parameter arrives back here
+    // through the parameterChanged() override above, but nothing keeps the
+    // preset name label or the A/B slots in sync for that path unless we do
+    // it here, the same way handleDropdownClick() does for our own
+    // dropdown (see resetABCompare()'s comment for why that matters).
+    void programLoaded(uint32_t index) override
+    {
+        if (index < kProgramCount)
+        {
+            resetABCompare();
+            activePresetName = kPresets[index].name;
+        }
+        repaint();
+    }
+
     void uiIdle() override
     {
         const auto now = std::chrono::steady_clock::now();
@@ -834,10 +851,26 @@ protected:
 private:
     // ---------------- Presets: file I/O ----------------
 
+    // HOME is the right variable on Linux/macOS, but is typically unset for
+    // a native Windows process (the project cross-compiles for Windows via
+    // cmake/toolchain-mingw64.cmake) - fall back to the Windows-native
+    // per-user variables before giving up and using the working directory,
+    // which for a plugin DLL is often somewhere under Program Files that
+    // the process can't write to.
+    static std::string getUserHomeDir()
+    {
+        if (const char* home = std::getenv("HOME"))
+            return home;
+        if (const char* profile = std::getenv("USERPROFILE"))
+            return profile;
+        if (const char* appdata = std::getenv("APPDATA"))
+            return appdata;
+        return ".";
+    }
+
     std::string getPresetsFilePath() const
     {
-        const char* home = std::getenv("HOME");
-        const std::string dir = std::string(home != nullptr ? home : ".") + "/.config/ampforge";
+        const std::string dir = getUserHomeDir() + "/.config/ampforge";
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         return dir + "/user_presets.txt";
@@ -913,8 +946,7 @@ private:
     // copied-over user_presets.txt) can be handed straight back to Import.
     std::string getExportsDirPath() const
     {
-        const char* home = std::getenv("HOME");
-        const std::string dir = std::string(home != nullptr ? home : ".") + "/.config/ampforge/exports";
+        const std::string dir = getUserHomeDir() + "/.config/ampforge/exports";
         std::error_code ec;
         std::filesystem::create_directories(dir, ec);
         return dir;
@@ -946,9 +978,13 @@ private:
             return;
         }
 
+        float values[kParamCount];
+        std::copy(paramValues, paramValues + kParamCount, values);
+        sanitizeOutputParams(values);
+
         f << "PRESET\n" << activePresetName << "\n";
         for (uint32_t i = 0; i < kParamCount; ++i)
-            f << paramToString(paramValues[i]) << "\n";
+            f << paramToString(values[i]) << "\n";
         f << "ENDPRESET\n";
 
         triggerSaveToast("Exported to " + path);
@@ -977,8 +1013,25 @@ private:
             return;
         }
 
-        for (const CustomPreset& p : imported)
+        uint32_t skippedFactoryNames = 0;
+        uint32_t importedCount = 0;
+        std::string lastImportedName;
+        for (CustomPreset p : imported)
         {
+            // Same rule as confirmSavePreset()'s collision guard - an
+            // imported preset that happens to share a factory preset's
+            // name (e.g. re-importing an export of an untouched factory
+            // preset) must not be allowed to shadow it in the dropdown.
+            if (isFactoryPresetName(p.name))
+            {
+                ++skippedFactoryNames;
+                continue;
+            }
+
+            sanitizeOutputParams(p.values);
+            ++importedCount;
+            lastImportedName = p.name;
+
             bool replaced = false;
             for (CustomPreset& existing : customPresets)
             {
@@ -993,10 +1046,20 @@ private:
                 customPresets.push_back(p);
         }
 
+        if (importedCount == 0)
+        {
+            triggerSaveToast("Import failed: only factory preset names found");
+            return;
+        }
+
         saveCustomPresetsToFile();
-        triggerSaveToast(imported.size() == 1
-            ? ("Imported \"" + imported[0].name + "\"")
-            : ("Imported " + std::to_string(imported.size()) + " presets"));
+
+        std::string msg = (importedCount == 1)
+            ? ("Imported \"" + lastImportedName + "\"")
+            : ("Imported " + std::to_string(importedCount) + " presets");
+        if (skippedFactoryNames > 0)
+            msg += " (" + std::to_string(skippedFactoryNames) + " skipped: factory preset name)";
+        triggerSaveToast(msg);
         repaint();
     }
 
@@ -1032,6 +1095,41 @@ private:
         return false;
     }
 
+    // True if `name` belongs to one of the built-in, read-only factory
+    // presets (kPresets) - used to stop a custom save from ever landing on
+    // the same name, which would otherwise leave two entries with identical
+    // names (one under FACTORY, one under CUSTOM) both showing as "active"
+    // in the dropdown with no way to tell them apart.
+    static bool isFactoryPresetName(const std::string& name)
+    {
+        for (uint32_t i = 0; i < kProgramCount; ++i)
+            if (kPresets[i].name == name)
+                return true;
+        return false;
+    }
+
+    // Input Level, CPU Load and Tuner Frequency are kParameterIsOutput -
+    // live sensor readings the DSP writes and the host/UI only ever reads,
+    // never something a preset should capture or replay. Excluded from
+    // save/export (so a file doesn't freeze whatever the meter happened to
+    // read at save time) and from applyValuesArray() (so loading a preset
+    // never issues a UI-initiated edit/write gesture for a parameter the
+    // host contract says only the plugin itself writes).
+    static bool isOutputOnlyParameter(uint32_t index)
+    {
+        return index == kParamInputLevel || index == kParamCpuLoad || index == kParamTunerFrequency;
+    }
+
+    // Zeroes the output-only slots in a kParamCount-sized values array
+    // before it's written to a preset (Save/Export) or after it's read
+    // back in (Import) - see isOutputOnlyParameter()'s comment above.
+    static void sanitizeOutputParams(float* values)
+    {
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            if (isOutputOnlyParameter(i))
+                values[i] = 0.0f;
+    }
+
     void triggerSaveToast(const std::string& text)
     {
         saveToastText = text;
@@ -1059,7 +1157,15 @@ private:
         }
 
         savingPreset = true;
-        nameInputBuffer = (activePresetName == "Untitled") ? "" : activePresetName;
+        if (activePresetName == "Untitled")
+            nameInputBuffer.clear();
+        else if (isFactoryPresetName(activePresetName))
+            // Pre-filling the bare factory name would just bounce straight
+            // into confirmSavePreset()'s collision guard below on the first
+            // Enter press - suggest a name that's actually savable instead.
+            nameInputBuffer = activePresetName + " copy";
+        else
+            nameInputBuffer = activePresetName;
     }
 
     void deleteActiveCustomPreset()
@@ -1094,6 +1200,7 @@ private:
             {
                 for (uint32_t i = 0; i < kParamCount; ++i)
                     existing.values[i] = paramValues[i];
+                sanitizeOutputParams(existing.values);
                 saveCustomPresetsToFile();
 
                 activePresetName = existing.name;
@@ -1104,10 +1211,22 @@ private:
             }
         }
 
+        // Refuse to create a custom preset that shadows a factory one by
+        // name - the dropdown has no way to show two same-named rows as
+        // distinct, so both would render "active" at once with no way to
+        // tell them apart or to ever reach the factory original again by
+        // name. Leave the dialog open so the user can pick another name.
+        if (isFactoryPresetName(nameInputBuffer))
+        {
+            triggerSaveToast("\"" + nameInputBuffer + "\" is a factory preset name - use a different name");
+            return;
+        }
+
         CustomPreset p;
         p.name = nameInputBuffer;
         for (uint32_t i = 0; i < kParamCount; ++i)
             p.values[i] = paramValues[i];
+        sanitizeOutputParams(p.values);
         customPresets.push_back(p);
         saveCustomPresetsToFile();
 
@@ -1121,6 +1240,8 @@ private:
     {
         for (uint32_t i = 0; i < kParamCount; ++i)
         {
+            if (isOutputOnlyParameter(i))
+                continue;
             editParameter(i, true);
             setParameterValue(i, values[i]);
             paramValues[i] = values[i];
@@ -1136,33 +1257,61 @@ private:
         repaint();
     }
 
-    // Switches the "active" A/B slot: saves the current live chain into
-    // whichever slot we're leaving (so in-progress tweaks are never lost,
-    // matching how DAWs' own A/B compare buttons behave), then loads the
-    // target slot - or, the first time a slot is visited, just seeds it
-    // as a copy of what's currently playing, so the user starts from an
-    // identical-sounding B and can tweak away before comparing back to A.
+    // Loading a preset (factory, custom, or blank) invalidates whatever was
+    // captured in the A/B slots - without this, picking a different preset
+    // while "A" is active leaves B's old snapshot pointing at the previous
+    // preset, so the first switch to B silently jumps back to it (chain,
+    // knobs and all) while the preset name label keeps showing the one you
+    // just picked. Resetting here means A and B both start out identical
+    // to whatever preset was just loaded, same as a fresh app launch.
+    // Call after activePresetName is already set to whatever was just
+    // loaded - both slots start out identical to it, name included, same
+    // as switchABSlot()'s own "first visit" seeding below.
+    void resetABCompare()
+    {
+        abActiveSlot = 'A';
+        abHasSnapshotA = false;
+        abHasSnapshotB = false;
+        abPresetNameA = activePresetName;
+        abPresetNameB = activePresetName;
+    }
+
+    // Switches the "active" A/B slot: saves the current live chain - and
+    // which preset name it's currently under - into whichever slot we're
+    // leaving (so in-progress tweaks, and any renaming from Save, are
+    // never lost, matching how DAWs' own A/B compare buttons behave), then
+    // loads the target slot - or, the first time a slot is visited, just
+    // seeds it as a copy of what's currently playing, so the user starts
+    // from an identical-sounding B and can tweak away before comparing
+    // back to A.
     void switchABSlot(char target)
     {
         if (target == abActiveSlot)
             return;
 
         float* fromSnap = (abActiveSlot == 'A') ? abSnapshotA : abSnapshotB;
+        std::string& fromName = (abActiveSlot == 'A') ? abPresetNameA : abPresetNameB;
         for (uint32_t i = 0; i < kParamCount; ++i)
             fromSnap[i] = paramValues[i];
+        fromName = activePresetName;
         if (abActiveSlot == 'A') abHasSnapshotA = true; else abHasSnapshotB = true;
 
         float* toSnap = (target == 'A') ? abSnapshotA : abSnapshotB;
+        std::string& toName = (target == 'A') ? abPresetNameA : abPresetNameB;
         bool& toHasSnapshot = (target == 'A') ? abHasSnapshotA : abHasSnapshotB;
         if (toHasSnapshot)
         {
             applyValuesArray(toSnap);
+            activePresetName = toName;
         }
         else
         {
             for (uint32_t i = 0; i < kParamCount; ++i)
                 toSnap[i] = fromSnap[i];
+            toName = fromName;
             toHasSnapshot = true;
+            // activePresetName is already correct: the target is seeded as
+            // an exact copy, name included, of the slot we just left.
         }
 
         abActiveSlot = target;
@@ -1170,6 +1319,7 @@ private:
 
     void applyBlankPreset()
     {
+        resetABCompare();
         applyValuesArray(kBlankPresetValues);
         activePresetName = "Untitled";
         presetDropdownOpen = false;
@@ -1280,6 +1430,7 @@ private:
         {
             if (my >= rowY && my < rowY + kDropdownRowH)
             {
+                resetABCompare();
                 applyValuesArray(kPresets[i].values);
                 activePresetName = kPresets[i].name;
                 presetDropdownOpen = false;
@@ -1295,6 +1446,7 @@ private:
             {
                 if (my >= rowY && my < rowY + kDropdownRowH)
                 {
+                    resetABCompare();
                     applyValuesArray(customPresets[ci].values);
                     activePresetName = customPresets[ci].name;
                     presetDropdownOpen = false;
@@ -2837,17 +2989,22 @@ private:
 
     std::vector<CustomPreset> customPresets;
 
-    // A/B comparison - two full parameter snapshots the user can flip
-    // between instantly (see switchABSlot()), independent of the preset
-    // system above (switching A/B doesn't touch activePresetName/undo any
-    // preset-related state, it's purely "what does the chain sound like
-    // right now" bookkeeping). UI-only: there's no DSP or parameter
-    // involved, applyValuesArray() (already used for presets) is what
-    // actually pushes a snapshot's values back into the chain.
+    // A/B comparison - two full parameter snapshots (plus which preset name
+    // each is under, below) the user can flip between instantly (see
+    // switchABSlot()). UI-only: there's no DSP or parameter involved,
+    // applyValuesArray() (already used for presets) is what actually pushes
+    // a snapshot's values back into the chain.
     char abActiveSlot = 'A';
     bool abHasSnapshotA = false, abHasSnapshotB = false;
     float abSnapshotA[kParamCount] = {};
     float abSnapshotB[kParamCount] = {};
+    // Which preset name each slot is currently under - lets Save give A and
+    // B genuinely distinct identities instead of both silently sharing the
+    // one activePresetName regardless of which slot is actually active.
+    // Kept correct by switchABSlot(), which captures the current
+    // activePresetName into the slot being left on every switch.
+    std::string abPresetNameA = "Chimey Clean";
+    std::string abPresetNameB = "Chimey Clean";
 
     // Local mirror of DPF State key/value pairs (currently just the
     // Cabinet block's loaded IR path), kept in sync via stateChanged().

@@ -142,9 +142,12 @@ cp -r build/bin/ampforge_main.clap ~/.clap/
 
 AmpForge doesn't need a Windows machine to build a Windows plugin -
 mingw-w64 cross-compiles VST3, CLAP, and LV2 straight from the same
-Linux checkout, into real PE32+ Windows binaries.
+Linux checkout, into real PE32+ Windows binaries. **Steps 1 and 2 below
+run on your Linux machine, same as the native build above** - the only
+part that touches a Windows machine at all is copying the finished
+files over in step 3.
 
-### 1. Install the mingw-w64 toolchain
+### 1. Install the mingw-w64 toolchain (on your Linux machine)
 
 **Arch / CachyOS / Manjaro:**
 
@@ -159,7 +162,7 @@ sudo pacman -S --needed mingw-w64-gcc mingw-w64-binutils \
 sudo apt install mingw-w64
 ```
 
-### 2. Configure and build
+### 2. Configure and build (on your Linux machine)
 
 Use a separate build directory and point `CMAKE_TOOLCHAIN_FILE` at
 `cmake/toolchain-mingw64.cmake` (included in this repo):
@@ -184,8 +187,9 @@ VST3/CLAP/LV2 inside a DAW don't need it.
 
 ### 3. Install on Windows
 
-Copy the built folders/files to wherever your host looks for plugins,
-e.g.:
+Copy the folders/files built in step 2 (from `build-windows/bin/` on
+your Linux machine) over to the Windows machine, to wherever your host
+looks for plugins, e.g.:
 
 - **VST3**: `%COMMONPROGRAMFILES%\VST3\` (typically
   `C:\Program Files\Common Files\VST3\`)
@@ -217,6 +221,20 @@ than DAW state — they don't travel *inside* a saved project file, though
 every parameter value you've dialed in does (that's standard host
 automation state, saved and restored with your project like any other
 plugin).
+
+### Exporting and importing presets
+
+The preset dropdown's **Export** button writes the currently-loaded
+preset to its own file under `~/.config/ampforge/exports/`, named after
+the preset (the toast that pops up after exporting shows the exact
+path) — hand that file to someone else, or copy it to another machine,
+and their **Import** button's native file picker can load it straight
+back in as a custom preset. A whole copied-over `user_presets.txt` can
+be imported the same way. Imported presets are added to (or, if the
+name matches one already in your list, update) your custom presets;
+importing a file whose preset happens to be named after one of the 7
+factory presets is skipped rather than silently shadowing it, since the
+dropdown has no way to show two same-named entries as distinct.
 
 ### Loading a cabinet impulse response
 

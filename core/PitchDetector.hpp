@@ -45,7 +45,11 @@ public:
         windowSize = static_cast<size_t>(sr * kWindowSeconds);
         hopSize = windowSize / 2;
 
-        minLag = static_cast<size_t>(sr / kMaxFrequencyHz);
+        // Clamped to at least 1: below kMaxFrequencyHz (1200Hz) of sample
+        // rate, sr / kMaxFrequencyHz truncates to 0, which would make the
+        // corr[]-fill loop below start at (size_t)(0 - 1) - an unsigned
+        // wraparound to SIZE_MAX instead of running backwards as intended.
+        minLag = std::max<size_t>(1, static_cast<size_t>(sr / kMaxFrequencyHz));
         maxLag = static_cast<size_t>(sr / kMinFrequencyHz);
         maxLag = std::min(maxLag, windowSize / 2); // stay well inside the window
 

@@ -32,7 +32,11 @@
 // initState()/getState()/setState()).
 #define DISTRHO_PLUGIN_WANT_STATE      1
 #define DISTRHO_PLUGIN_WANT_FULL_STATE 1
-#define DISTRHO_UI_FILE_BROWSER      0
+// Needed for UI::requestStateFile() (the Cabinet's "Load IR File..." and
+// the preset Import button both use it) to actually open a dialog instead
+// of silently no-op'ing - see ChainUI.cpp's handleControlBarClick() and
+// drawFileLoaderButton().
+#define DISTRHO_UI_FILE_BROWSER      1
 #define DISTRHO_UI_USER_RESIZABLE    1
 #define DISTRHO_UI_USE_NANOVG        1
 

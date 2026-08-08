@@ -141,14 +141,6 @@ enum Parameters
     // above, so existing parameter indices/presets stay unchanged.
     kParamInputGain,
 
-    // Input Level - the post-trim peak level, reported back to the UI so
-    // players can see how hot their signal is while dialing Input Gain
-    // and the Noise Gate in together. Output-only (kParameterIsOutput):
-    // ChainPlugin::run() writes it every block, the host polls it and
-    // forwards the value to the UI's parameterChanged() - the same
-    // mechanism DPF's own Meters example uses.
-    kParamInputLevel,
-
     // Tempo sync - lets Delay/Tremolo/Chorus lock their rate to the host's
     // BPM (via DPF's TimePosition API) instead of only the free-running
     // ms/Hz knob. Each is a single index into kSyncDivisions below: 0 means
@@ -161,24 +153,16 @@ enum Parameters
     kParamTremoloSync,
     kParamChorusSync,
 
-    // CPU Load - how much of the available per-block time run() actually
-    // used (1.0 = took the whole block interval, i.e. right at the edge of
-    // an audio dropout), reported back to the UI the same way Input Level
-    // is above. Output-only (kParameterIsOutput); ChainPlugin::run() times
-    // itself with std::chrono and writes this every block.
-    kParamCpuLoad,
-
     // Tuner - a standalone pitch-detection overlay (core/PitchDetector.hpp)
     // that taps a copy of the post-Input-Gain, pre-chain signal, entirely
     // outside the reorderable pedalboard, so it always reads the guitar's
     // actual pitch regardless of what Distortion/Wah/etc. are doing to the
     // signal that reaches the amp. kParamTunerOn is the UI's toggle button
     // (ChainPlugin::run() only bothers feeding the detector while it's on);
-    // kParamTunerFrequency is output-only, the detected pitch in Hz (0 =
-    // no confident pitch right now), which the UI turns into a note name
-    // and cents offset for display.
+    // its output-only frequency reading lives at the very end of this enum,
+    // with the other output-only parameters - see the comment down there
+    // for why.
     kParamTunerOn,
-    kParamTunerFrequency,
 
     // Amp Type - selects between the handful of EQ-and-saturation
     // voicings defined in core/AmpBlock.hpp's kAmpVoicings (index 0,
@@ -189,6 +173,38 @@ enum Parameters
     // 02-amp plugin too - not something specific to this chain plugin the
     // way kSyncDivisions above is.
     kParamAmpType,
+
+    // Output-only meters (kParameterIsOutput) - deliberately grouped here,
+    // all together at the very end, rather than appended next to the
+    // input/feature they each report on (which is where they originally
+    // lived, and read more naturally). DPF's LV2 presets.ttl exporter
+    // writes the non-output parameters as one comma-separated lv2:port
+    // list and only closes it with a "." once it hits either the last
+    // parameter or an output one - so *any* output parameter that isn't
+    // at the very end splits that list into multiple statements with no
+    // subject on the second one, which is invalid Turtle syntax (verified
+    // with lv2_validate: Carla's own lilv-based loader shrugs it off and
+    // loads the plugin fine, but it leaves the host's *own* separate LV2
+    // preset browser broken/empty for that bundle). Clustering all three
+    // here avoids that entirely.
+    //
+    // Input Level - the post-trim peak level, reported back to the UI so
+    // players can see how hot their signal is while dialing Input Gain
+    // and the Noise Gate in together. ChainPlugin::run() writes it every
+    // block, the host polls it and forwards the value to the UI's
+    // parameterChanged() - the same mechanism DPF's own Meters example
+    // uses.
+    kParamInputLevel,
+    // CPU Load - how much of the available per-block time run() actually
+    // used (1.0 = took the whole block interval, i.e. right at the edge of
+    // an audio dropout), reported back to the UI the same way Input Level
+    // is above. ChainPlugin::run() times itself with std::chrono and
+    // writes this every block.
+    kParamCpuLoad,
+    // Tuner Frequency - the detected pitch in Hz for kParamTunerOn above
+    // (0 = no confident pitch right now), which the UI turns into a note
+    // name and cents offset for display.
+    kParamTunerFrequency,
 
     kParamCount
 };
