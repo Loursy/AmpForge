@@ -26,10 +26,35 @@ ENV DEBIAN_FRONTEND=noninteractive
 
 # Same package list as the README's "Install prerequisites" section for
 # Debian/Ubuntu, so this image tracks the same dependency set a human
-# building natively on Ubuntu would install.
+# building natively on Ubuntu would install - except cmake itself, see
+# the Kitware repo step below for why that one's not just `apt install
+# cmake`.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential cmake ninja-build git ca-certificates pkg-config \
+        build-essential ninja-build git ca-certificates pkg-config \
         libx11-dev libxext-dev libxcursor-dev libxrandr-dev libgl1-mesa-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ubuntu 22.04's own `cmake` package is 3.22.1 - too old for the
+# LINK_LIBRARY WHOLE_ARCHIVE feature plugins/04-chain/CMakeLists.txt
+# needs (added in CMake 3.24) to correctly link every NAM architecture's
+# self-registering config parser into the final binary. Building with
+# 3.22.1 doesn't fail - it just silently drops the parser for whichever
+# architecture isn't otherwise referenced by name (in practice, the A2
+# "SlimmableContainer" wrapper - see that CMakeLists.txt's own comment),
+# so a Docker-built release would load some .nam files and silently
+# fail on others with "No config parser registered for architecture:
+# SlimmableContainer" at runtime, despite the build itself succeeding
+# cleanly with only a CMake warning easy to miss in the log. Pulling a
+# current cmake from Kitware's own apt repo instead of Ubuntu's avoids
+# that - same fix the README suggests to a human stuck on Ubuntu
+# 20.04's even older 3.16.3.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        ca-certificates gpg wget \
+    && wget -qO - https://apt.kitware.com/keys/kitware-archive-latest.asc \
+        | gpg --dearmor -o /usr/share/keyrings/kitware-archive-keyring.gpg \
+    && echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ jammy main" \
+        > /etc/apt/sources.list.d/kitware.list \
+    && apt-get update && apt-get install -y --no-install-recommends cmake \
     && rm -rf /var/lib/apt/lists/*
 
 COPY installer/linux/docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
