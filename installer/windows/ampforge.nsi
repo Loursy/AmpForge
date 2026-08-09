@@ -14,10 +14,13 @@
 !include "MUI2.nsh"
 
 !define PRODUCT_NAME "AmpForge"
-; No version scheme exists elsewhere in the project yet (no CMake
-; project(... VERSION ...), no tags) - bump this by hand alongside a real
-; release once one exists.
-!define PRODUCT_VERSION "0.1.0"
+; No CMake project(... VERSION ...) exists yet - bump this by hand
+; alongside installer/linux/package.sh's own VERSION and the git tag,
+; every time a release goes out. This isn't rebuilt/republished on
+; every Linux release (no Windows cross-build CI yet - see the
+; README's Project status section), so it can trail a release or two
+; behind if only Linux changed.
+!define PRODUCT_VERSION "0.2.0"
 !define PRODUCT_WEB_SITE "https://github.com/Loursy/AmpForge"
 !define BUILD_DIR "..\..\build-windows\bin"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AmpForge"
