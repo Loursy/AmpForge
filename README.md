@@ -359,12 +359,14 @@ Known gaps, tracked for future work:
   those for Windows isn't set up yet, so there's no Windows standalone
   `.exe` for now (VST3/CLAP/LV2 inside a DAW cover the overwhelming
   majority of Windows use anyway).
-- CI ([GitHub Actions](.github/workflows/linux-build.yml)) now builds
-  and packages the Linux tarball on every push/PR/tag, using the same
-  portable Docker build described above - but it only uploads a build
-  artifact, it doesn't publish a GitHub Release automatically yet, and
-  the Windows installer isn't built by CI at all. Both releases are
-  still published by hand for now.
+- CI ([GitHub Actions](.github/workflows/linux-build.yml)) builds and
+  packages the Linux tarball on every push/PR/tag using the same
+  portable Docker build described above, and on a `v*` tag push
+  publishes it as a GitHub Release automatically - pushing a tag is
+  the whole Linux release process now, no local Docker run or manual
+  upload needed. The Windows installer isn't built by CI at all yet
+  though (no Windows cross-build image exists), so it's still built
+  and published by hand, on whatever cadence actually needs a new one.
 
 ## Contributing
 

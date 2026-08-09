@@ -15,7 +15,17 @@
 # plugins, which <BUILD_DIR>/bin/ also has but which aren't the product).
 set -euo pipefail
 
-VERSION="0.2.0" # no CMake project version yet - keep this in sync with installer/windows/ampforge.nsi's PRODUCT_VERSION by hand.
+# Defaults to a hardcoded fallback (keep this in sync with
+# installer/windows/ampforge.nsi's PRODUCT_VERSION by hand - there's no
+# CMake project version yet) but can be overridden, the same way
+# BUILD_DIR above can:
+#   VERSION=0.3.0 installer/linux/package.sh
+# CI (.github/workflows/linux-build.yml) does exactly this on a tag
+# push, deriving VERSION from the git tag itself - so a *released*
+# tarball's version always matches its tag with no hand-editing here
+# required, and this hardcoded fallback only actually matters for an
+# untagged local/CI build.
+VERSION="${VERSION:-0.2.0}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="$REPO_ROOT/${BUILD_DIR:-build}"
