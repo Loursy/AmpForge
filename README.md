@@ -91,6 +91,17 @@ tarball](#download) - e.g. to install just one plugin format, or to
 track the latest commit? It's a standard CMake + Ninja project and
 only takes a few minutes.
 
+**Planning to use it in a flatpak/snap-sandboxed host (Bitwig's
+flatpak build is the most common case), or building on a
+rolling-release distro (Arch, CachyOS, Manjaro)?** The native steps
+below link against *your own system's* glibc, which on a rolling
+release is often newer than what an older sandboxed host ships
+internally - the plugin then fails to load there with an error like
+`version 'GLIBC_2.43' not found`, even though it built and runs fine
+outside the sandbox. Skip straight to the [Docker
+build](#building-a-portable-release-build-docker) below instead - it
+sidesteps this by pinning to a fixed, older glibc baseline.
+
 ### 1. Install prerequisites
 
 **Debian / Ubuntu:**
