@@ -1,6 +1,8 @@
 #pragma once
 #include "AudioBlock.hpp"
 #include <vector>
+#include <array>
+#include <atomic>
 #include <cmath>
 #include <algorithm>
 
@@ -17,12 +19,22 @@ namespace ampforge {
 class ChorusBlock : public AudioBlock
 {
 public:
+    // Builds the new delay line fully in the *inactive* slot, then a
+    // single atomic store publishes it - same cross-thread hot-swap
+    // reasoning as ReverbBlock.hpp's CombFilter (setSampleRate() isn't
+    // guaranteed to run on the audio thread, and a plain buffer.assign()
+    // here used to be visible mid-resize from processSample() running
+    // concurrently on the realtime audio thread - see that file's comment
+    // for the crash this caused).
     void setSampleRate(double sr) override
     {
         sampleRate = sr;
         const size_t maxSamples = static_cast<size_t>(sr * 0.05) + 1; // 50ms max, plenty for chorus
-        buffer.assign(maxSamples, 0.0f);
-        writeIndex = 0;
+        const int active = activeSlot.load(std::memory_order_acquire);
+        const size_t next = (active < 0) ? 0 : (1 - static_cast<size_t>(active));
+        buffers[next].assign(maxSamples, 0.0f);
+        writeIndices[next] = 0;
+        activeSlot.store(static_cast<int>(next), std::memory_order_release);
         lfoPhase = 0.0f;
     }
 
@@ -34,9 +46,12 @@ public:
 
     float processSample(float input) override
     {
-        if (buffer.empty())
+        const int active = activeSlot.load(std::memory_order_acquire);
+        if (active < 0)
             return input;
 
+        std::vector<float>& buffer = buffers[static_cast<size_t>(active)];
+        size_t& writeIndex = writeIndices[static_cast<size_t>(active)];
         const size_t bufferSize = buffer.size();
 
         // LFO: a slow sine wave that sweeps the delay time up and down
@@ -67,8 +82,9 @@ public:
 
 private:
     double sampleRate = 44100.0;
-    std::vector<float> buffer;
-    size_t writeIndex = 0;
+    std::array<std::vector<float>, 2> buffers;
+    std::array<size_t, 2> writeIndices{{0, 0}};
+    std::atomic<int> activeSlot{-1};
 
     float lfoPhase = 0.0f;
     float rateHz = 1.0f;

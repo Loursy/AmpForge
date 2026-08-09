@@ -3,6 +3,7 @@
 #include "Denormal.hpp"
 #include <vector>
 #include <array>
+#include <atomic>
 #include <cmath>
 #include <algorithm>
 
@@ -26,14 +27,29 @@ namespace ampforge {
 // One comb filter: delay + feedback + a simple damping (lowpass) in the
 // feedback path, so high frequencies decay faster than low ones - like
 // they do in a real room.
+//
+// setDelaySamples() runs on whatever thread ReverbBlock::setSampleRate()
+// is called from - which isn't necessarily the audio thread: DPF calls
+// sampleRateChanged() again any time the host's rate changes mid-session
+// (e.g. the user switches audio interfaces while the plugin is already
+// running), racing against process() below on the realtime audio thread.
+// A plain buffer.assign() + index=0 here used to be visible mid-resize
+// from that other thread - buffer.size() and index momentarily
+// disagreeing, which tripped a std::vector out-of-bounds abort. Fixed the
+// same way NamBlock/CabinetBlock hot-swap their own resources: build the
+// new delay line fully in the *inactive* slot, then a single atomic store
+// publishes it, so process() only ever sees a complete, consistent one.
 class CombFilter
 {
 public:
     void setDelaySamples(int samples)
     {
-        buffer.assign(static_cast<size_t>(std::max(1, samples)), 0.0f);
-        index = 0;
-        filterStore = 0.0f;
+        const int active = activeSlot.load(std::memory_order_acquire);
+        const size_t next = (active < 0) ? 0 : (1 - static_cast<size_t>(active));
+        buffers[next].assign(static_cast<size_t>(std::max(1, samples)), 0.0f);
+        indices[next] = 0;
+        stores[next] = 0.0f;
+        activeSlot.store(static_cast<int>(next), std::memory_order_release);
     }
 
     void setFeedback(float fb) { feedback = fb; }
@@ -41,12 +57,17 @@ public:
 
     float process(float input)
     {
-        // Safety check: if setDelaySamples() hasn't been called yet (buffer
-        // still empty), just pass the signal through instead of indexing
-        // into an empty vector - this can happen if the host processes
-        // audio before it reports the sample rate.
-        if (buffer.empty())
+        // Safety check: if setDelaySamples() hasn't been called yet (no
+        // slot published), just pass the signal through instead of
+        // indexing into an empty vector - this can happen if the host
+        // processes audio before it reports the sample rate.
+        const int active = activeSlot.load(std::memory_order_acquire);
+        if (active < 0)
             return input;
+
+        std::vector<float>& buffer = buffers[static_cast<size_t>(active)];
+        size_t& index = indices[static_cast<size_t>(active)];
+        float& filterStore = stores[static_cast<size_t>(active)];
 
         const float output = buffer[index];
 
@@ -63,29 +84,38 @@ public:
     }
 
 private:
-    std::vector<float> buffer;
-    size_t index = 0;
+    std::array<std::vector<float>, 2> buffers;
+    std::array<size_t, 2> indices{{0, 0}};
+    std::array<float, 2> stores{{0.0f, 0.0f}};
+    std::atomic<int> activeSlot{-1};
     float feedback = 0.5f;
     float damping = 0.5f;
-    float filterStore = 0.0f;
 };
 
 // One allpass filter: passes all frequencies equally (doesn't change
-// tone) but smears the signal in time, adding diffusion.
+// tone) but smears the signal in time, adding diffusion. Same
+// cross-thread hot-swap reasoning as CombFilter above.
 class AllpassFilter
 {
 public:
     void setDelaySamples(int samples)
     {
-        buffer.assign(static_cast<size_t>(std::max(1, samples)), 0.0f);
-        index = 0;
+        const int active = activeSlot.load(std::memory_order_acquire);
+        const size_t next = (active < 0) ? 0 : (1 - static_cast<size_t>(active));
+        buffers[next].assign(static_cast<size_t>(std::max(1, samples)), 0.0f);
+        indices[next] = 0;
+        activeSlot.store(static_cast<int>(next), std::memory_order_release);
     }
 
     float process(float input)
     {
         // Same safety check as CombFilter - avoid indexing an empty buffer.
-        if (buffer.empty())
+        const int active = activeSlot.load(std::memory_order_acquire);
+        if (active < 0)
             return input;
+
+        std::vector<float>& buffer = buffers[static_cast<size_t>(active)];
+        size_t& index = indices[static_cast<size_t>(active)];
 
         const float bufOut = buffer[index];
         const float output = -input + bufOut;
@@ -95,8 +125,9 @@ public:
     }
 
 private:
-    std::vector<float> buffer;
-    size_t index = 0;
+    std::array<std::vector<float>, 2> buffers;
+    std::array<size_t, 2> indices{{0, 0}};
+    std::atomic<int> activeSlot{-1};
     float feedback = 0.5f;
 };
 
