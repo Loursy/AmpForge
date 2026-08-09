@@ -24,8 +24,11 @@ removes them again. Prefer to build it yourself, or install each
 format individually? See [Building from source](#building-from-source)
 below.
 
-(Windows users: an installer - `AmpForge-Setup.exe` - is also on the
-same [Releases page](https://github.com/Loursy/AmpForge/releases/latest).)
+(Windows users: an installer - `AmpForge-Setup.exe` - is on the
+[Releases page](https://github.com/Loursy/AmpForge/releases) too,
+though it isn't rebuilt for every release yet - see [Project
+status](#project-status) - so grab it from the newest release that
+actually has one attached if the latest doesn't.)
 
 ## Features
 
