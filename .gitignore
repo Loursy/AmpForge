@@ -1,6 +1,7 @@
 
 build/
 build-windows/
+build-docker/
 
 
 *.o

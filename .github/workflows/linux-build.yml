@@ -1,0 +1,34 @@
+name: Linux build
+
+# Builds the Linux plugins inside installer/linux/Dockerfile's fixed Ubuntu
+# 22.04 image (glibc 2.35) rather than on whatever the runner's own image
+# happens to ship, so the emitted .so/.clap/.vst3 stay loadable on older
+# distros and flatpak/snap sandboxes - see that Dockerfile's comment for
+# the "GLIBC_2.43 not found in a flatpak host" issue this avoids. This also
+# means CI builds exactly what installer/linux/docker-build.sh produces
+# locally, so a release built here is reproducible on a dev machine too.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build plugins (Docker, glibc 2.35 baseline)
+        run: installer/linux/docker-build.sh
+
+      - name: Package release tarball
+        run: BUILD_DIR=build-docker installer/linux/package.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ampforge-linux-x86_64
+          path: build-docker/AmpForge-*-linux-x86_64.tar.gz
+          if-no-files-found: error

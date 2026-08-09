@@ -77,7 +77,22 @@ static constexpr float kRackTop          = kTopBarHeight + kControlBarHeight + 2
 static constexpr float kModuleLeft       = kPaletteWidth + 20.0f;
 static constexpr float kModuleHeaderH    = 42.0f;
 static constexpr float kKnobAreaH        = 108.0f;
-static constexpr float kModuleGap        = 16.0f;
+// kPedalCardH is the one shared "how tall is a pedal card" constant every
+// card-height computation in this file uses (rack layout, scrolling,
+// hit-testing, drag/drop) - kept singular on purpose, see
+// rackModuleWidth()'s comment for why duplicating this formula caused real
+// bugs before. No separate footswitch strip anymore - bypass is a compact
+// rocker+LED toggle inside the header instead (see drawHeaderToggle()),
+// out of the reorderable card body and 64px shorter per card, so the rack
+// reads as more compact/stable overall.
+static constexpr float kPedalCardH       = kModuleHeaderH + kKnobAreaH;
+// Compact rocker-switch + LED toggle geometry (see drawHeaderToggle()).
+static constexpr float kHeaderToggleW    = 30.0f;
+static constexpr float kHeaderToggleH    = 16.0f;
+// Widened from the original 16px so the cable connector drawn in this gap
+// (see drawCableConnector()) has room to read clearly.
+static constexpr float kModuleGap        = 24.0f;
+static constexpr float kCableJackRadius  = 3.5f;
 static constexpr float kKnobRadius       = 22.0f;
 static constexpr float kKnobSpacing      = 84.0f;
 static constexpr float kKnobCenterYOffset = 50.0f; // header bottom -> knob center
@@ -86,7 +101,6 @@ static constexpr float kValueChipH       = 18.0f;
 static constexpr float kValueChipGap     = 8.0f;
 static constexpr float kFileLoaderW      = 132.0f;
 static constexpr float kFileLoaderH      = 28.0f;
-static constexpr float kSwitchSize       = 18.0f;
 static constexpr float kRemoveSize       = 16.0f;
 static constexpr float kKnobDragSensitivity = 220.0f;
 static constexpr float kValueAnimSpeed   = 16.0f; // 1/s, exponential ease for knob values
@@ -96,13 +110,26 @@ static constexpr float kAnimSnapEpsilon  = 0.001f;
 static constexpr float kDropdownRowH     = 28.0f;
 static constexpr float kDragThreshold    = 6.0f;
 
-// The Input panel sits above the reorderable pedal rack, fixed and never
-// scrolled/dragged (see kInputPedalIndex below) - same card height as a
-// normal pedal so it reads as part of the same rack visually, then the
-// rack of actual pedals starts below it.
-static constexpr float kInputPanelH      = kModuleHeaderH + kKnobAreaH;
-static constexpr float kPedalRackTop     = kRackTop + kInputPanelH + kModuleGap;
+// The reorderable pedal rack starts right at the top - the Input trim
+// isn't one of the pedals (see kInputPedalIndex below), so it doesn't get
+// a slot in that column at all anymore; it lives in the fixed right-hand
+// sidebar column instead (see kInputPanelH/drawInputPanel() below).
+static constexpr float kPedalRackTop     = kRackTop;
 static constexpr float kMeterW           = 22.0f;
+
+// The right-hand sidebar column: a fixed Input panel (Gain trim knob +
+// peak meter - never scrolled/dragged, and now visually out of the
+// reorderable rack entirely rather than just sitting above it) stacked
+// above the Status panel (sample rate, buffer size, NAM model info) below
+// it. Both share kSidebarWidth. kSidebarGap is the breathing room between
+// the scrollable pedal rack and this column.
+static constexpr float kSidebarWidth     = 200.0f;
+static constexpr float kSidebarGap       = 20.0f;
+static constexpr float kInputPanelH      = kModuleHeaderH + kKnobAreaH;
+static constexpr float kStatusPanelTop   = kRackTop + kInputPanelH + kModuleGap;
+// Shorter than before (320) now that the Input Level meter isn't
+// duplicated here too - see drawStatusSidebar()'s comment.
+static constexpr float kSidebarHeight    = 230.0f;
 
 struct KnobDef
 {
@@ -124,6 +151,43 @@ struct KnobDef
     bool isAmpType = false;
 };
 
+// Varies the card's enclosure silhouette - drawn by drawStompboxBody().
+// Real proportions/height stay uniform across every pedal (see kPedalCardH's
+// comment on why - the rack's drag/scroll/hit-test math all assumes one
+// shared card height), so this is about corner treatment and top-plate
+// styling, not overall size: enough to make each family of pedals read as
+// visually distinct without touching layout.
+enum class StompShape
+{
+    Standard, // classic stomp box - evenly rounded corners
+    Mini,     // compact pedal - tighter corner radius, narrower top plate
+    Wide,     // utility-box proportions - square-ish corners, full-width top plate
+    Angled,   // wedge-topped enclosure, like a rocker/treadle pedal
+    HexCut,   // chamfered top corners - a fancier boutique-pedal look
+};
+
+// The badge glyph drawn in the header, unique per effect type - see
+// drawStompIcon(). Deliberately simple (a handful of NanoVG primitives
+// each), not full illustrations - legible at the small size a header badge
+// actually renders at.
+enum class StompIcon
+{
+    None,
+    Gate,
+    Compressor,
+    Wah,
+    Overdrive,
+    Distortion,
+    AmpHead,
+    Cabinet,
+    Chorus,
+    Phaser,
+    Tremolo,
+    Delay,
+    Reverb,
+    Neural,
+};
+
 struct PedalDef
 {
     const char* name;
@@ -133,9 +197,9 @@ struct PedalDef
     // The pedal's canonical slot in the recommended signal chain, used to
     // place it when it's freshly added (see addPedalAtDefaultPosition()) -
     // kept as an explicit field, separate from this array's own index,
-    // since new pedal types get appended at the end of this table (to
-    // keep kAmpPedalIndex and existing entries' indices stable) but may
-    // still belong earlier in the actual recommended chain order.
+    // since new pedal types get appended at the end of this table (to keep
+    // existing entries' indices stable) but may still belong earlier in
+    // the actual recommended chain order.
     int defaultPosition;
     Color accent;
     std::vector<KnobDef> knobs;
@@ -145,6 +209,14 @@ struct PedalDef
     // ChainPlugin.cpp's initState()/getState()/setState().
     bool hasFileLoader = false;
     const char* stateKey = nullptr;
+    StompShape shape = StompShape::Standard;
+    StompIcon icon = StompIcon::None;
+    // The file-loader button's own placeholder text before anything's
+    // been loaded (see drawFileLoaderButton()) - Cabinet and NAM both set
+    // hasFileLoader, but load different kinds of files, so a single
+    // hardcoded label doesn't fit both. Trailing field (after shape/icon)
+    // so every existing positional initializer below stays valid as-is.
+    const char* fileLoaderLabel = "Load File...";
 };
 
 // clang-format off
@@ -155,75 +227,79 @@ static const PedalDef kPedalDefs[] =
         { "Attack",  kParamGateAttack,      0.5f, 50.0f,   "ms", 1, false },
         { "Release", kParamGateRelease,    10.0f, 1000.0f, "ms", 0, false },
         { "Range",   kParamGateRange,       0.0f, 80.0f,   "dB", 0, false },
-    }},
+    }, false, nullptr, StompShape::Standard, StompIcon::Gate },
     { "Compressor", kParamCompOn,     kParamCompBypass,     kParamCompPosition,  1, Color(175, 120, 225), {
         { "Thresh",  kParamCompThreshold, -60.0f, 0.0f,    "dB", 1, false },
         { "Ratio",   kParamCompRatio,       1.0f, 20.0f,   ":1", 1, false },
         { "Attack",  kParamCompAttack,      0.5f, 100.0f,  "ms", 1, false },
         { "Release", kParamCompRelease,    10.0f, 1000.0f, "ms", 0, false },
         { "Makeup",  kParamCompMakeup,      0.0f, 24.0f,   "dB", 1, false },
-    }},
+    }, false, nullptr, StompShape::Standard, StompIcon::Compressor },
     { "Wah",        kParamWahOn,      kParamWahBypass,      kParamWahPosition,   2, Color(235, 155, 60), {
         { "Pedal",   kParamWahPedal,  0.0f, 1.0f,  "", 0, true },
         { "Q",       kParamWahQ,      0.5f, 10.0f, "", 1, false },
-    }},
+    }, false, nullptr, StompShape::Angled, StompIcon::Wah },
     { "Screamer",   kParamScreamerOn, kParamScreamerBypass, kParamScreamerPosition, 3, Color(235, 95, 70), {
         { "Drive",   kParamScreamerDrive,  1.0f, 20.0f,  "x", 1, false },
         { "Tone",    kParamScreamerTone,   0.05f, 1.0f,  "",  0, true },
         { "Level",   kParamScreamerLevel, -24.0f, 12.0f, "dB", 1, false },
-    }},
-    { "Amp",        -1,               -1,                   kParamAmpPosition,   5, Color(90, 170, 255), {
+    }, false, nullptr, StompShape::Standard, StompIcon::Overdrive },
+    { "Amp",        kParamAmpOn,      kParamAmpBypass,      kParamAmpPosition,   5, Color(90, 170, 255), {
         { "Type",    kParamAmpType,     0.0f, float(ampforge::kAmpVoicingCount - 1), "", 0, false, false, true },
         { "Drive",   kParamAmpDrive,    0.0f, 36.0f,  "dB", 1, false },
         { "Bass",    kParamAmpBass,   -12.0f, 12.0f,  "dB", 1, false },
         { "Mid",     kParamAmpMid,    -12.0f, 12.0f,  "dB", 1, false },
         { "Treble",  kParamAmpTreble, -12.0f, 12.0f,  "dB", 1, false },
         { "Volume",  kParamAmpVolume, -24.0f, 12.0f,  "dB", 1, false },
-    }},
-    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, 7, Color(70, 205, 195), {
+    }, false, nullptr, StompShape::Wide, StompIcon::AmpHead },
+    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, 8, Color(70, 205, 195), {
         { "Rate",    kParamChorusRate,   0.05f, 5.0f,  "Hz", 2, false },
         { "Depth",   kParamChorusDepth,  0.5f, 20.0f,  "ms", 1, false },
         { "Mix",     kParamChorusMix,    0.0f, 1.0f,   "",   0, true },
         { "Sync",    kParamChorusSync,   0.0f, float(kSyncDivisionCount - 1), "", 0, false, true },
-    }},
-    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, 8, Color(185, 115, 235), {
+    }, false, nullptr, StompShape::Standard, StompIcon::Chorus },
+    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, 9, Color(185, 115, 235), {
         { "Rate",    kParamPhaserRate,  0.05f, 5.0f, "Hz", 2, false },
         { "Depth",   kParamPhaserDepth, 0.0f, 1.0f,  "",   0, true },
         { "Mix",     kParamPhaserMix,   0.0f, 1.0f,  "",   0, true },
-    }},
-    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, 9, Color(235, 205, 60), {
+    }, false, nullptr, StompShape::HexCut, StompIcon::Phaser },
+    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, 10, Color(235, 205, 60), {
         { "Rate",    kParamTremoloRate,  0.5f, 15.0f, "Hz", 1, false },
         { "Depth",   kParamTremoloDepth, 0.0f, 1.0f,  "",   0, true },
         { "Sync",    kParamTremoloSync,  0.0f, float(kSyncDivisionCount - 1), "", 0, false, true },
-    }},
-    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  10, Color(95, 225, 145), {
+    }, false, nullptr, StompShape::Standard, StompIcon::Tremolo },
+    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  11, Color(95, 225, 145), {
         { "Time",     kParamDelayTime,      10.0f, 1500.0f, "ms", 0, false },
         { "Feedback", kParamDelayFeedback,   0.0f, 0.95f,   "",   0, true },
         { "Mix",      kParamDelayMix,        0.0f, 1.0f,    "",   0, true },
         { "Sync",     kParamDelaySync,       0.0f, float(kSyncDivisionCount - 1), "", 0, false, true },
-    }},
-    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, 11, Color(115, 125, 235), {
+    }, false, nullptr, StompShape::Standard, StompIcon::Delay },
+    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, 12, Color(115, 125, 235), {
         { "Room",     kParamReverbRoomSize, 0.0f, 1.0f, "", 0, true },
         { "Damping",  kParamReverbDamping,  0.0f, 1.0f, "", 0, true },
         { "Mix",      kParamReverbMix,      0.0f, 1.0f, "", 0, true },
-    }},
+    }, false, nullptr, StompShape::Wide, StompIcon::Reverb },
     // Both appended at the end of the table (rather than where they
-    // belong tonally) so every pedal above keeps the same array index -
-    // notably kAmpPedalIndex below. Their defaultPosition fields are what
-    // actually place them correctly when added.
+    // belong tonally) so every pedal above keeps the same array index.
+    // Their defaultPosition fields are what actually place them correctly
+    // when added.
     { "Distortion", kParamDistortionOn, kParamDistortionBypass, kParamDistortionPosition, 4, Color(220, 75, 120), {
         { "Drive",   kParamDistortionDrive,  1.0f, 30.0f,  "x", 1, false },
         { "Tone",    kParamDistortionTone,   0.05f, 1.0f,  "",  0, true },
         { "Level",   kParamDistortionLevel, -24.0f, 12.0f, "dB", 1, false },
-    }},
+    }, false, nullptr, StompShape::Mini, StompIcon::Distortion },
     { "Cabinet",    kParamCabinetOn, kParamCabinetBypass, kParamCabinetPosition, 6, Color(200, 160, 90), {
         { "Mix",     kParamCabinetMix,    0.0f, 1.0f,   "",   0, true },
         { "Level",   kParamCabinetLevel, -24.0f, 12.0f, "dB", 1, false },
-    }, true, kCabinetIRStateKey },
+    }, true, kCabinetIRStateKey, StompShape::Wide, StompIcon::Cabinet, "Load IR File..." },
+    { "NAM",        kParamNamOn,     kParamNamBypass,     kParamNamPosition, 7, Color(230, 120, 200), {
+        { "In",      kParamNamInputTrim,    -24.0f, 24.0f, "dB", 1, false },
+        { "Mix",     kParamNamMix,             0.0f, 1.0f,  "",   0, true },
+        { "Out",     kParamNamOutputLevel,  -24.0f, 12.0f, "dB", 1, false },
+    }, true, kNamModelStateKey, StompShape::HexCut, StompIcon::Neural, "Load NAM Model..." },
 };
 // clang-format on
 static constexpr int kPedalDefCount = sizeof(kPedalDefs) / sizeof(kPedalDefs[0]);
-static constexpr int kAmpPedalIndex = 4;
 
 // The Input panel's Gain knob isn't part of kPedalDefs (it's a fixed
 // pre-chain trim, not a reorderable/toggleable pedal - see
@@ -246,8 +322,7 @@ static const std::vector<int> kPaletteOrder = []()
 {
     std::vector<int> order;
     for (int i = 0; i < kPedalDefCount; ++i)
-        if (i != kAmpPedalIndex)
-            order.push_back(i);
+        order.push_back(i);
     std::sort(order.begin(), order.end(), [](int a, int b)
     {
         return kPedalDefs[a].defaultPosition < kPedalDefs[b].defaultPosition;
@@ -265,16 +340,20 @@ static const float kBlankPresetValues[kParamCount] =
     /* Wah       on,pos,pedal,q */               0.0f, 2.0f, 0.5f, 3.0f,
     /* Screamer  on,pos,drive,tone,level */      0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
     /* Amp       pos,drive,bass,mid,treble,vol */ 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-    /* Chorus    on,pos,rate,depth,mix */        0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
-    /* Phaser    on,pos,rate,depth,mix */        0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
-    /* Tremolo   on,pos,rate,depth */            0.0f, 9.0f, 5.0f, 0.5f,
-    /* Delay     on,pos,time,fb,mix */           0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
-    /* Reverb    on,pos,room,damp,mix */         0.0f, 11.0f, 0.5f, 0.5f, 0.3f,
+    /* Chorus    on,pos,rate,depth,mix */        0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
+    /* Phaser    on,pos,rate,depth,mix */        0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
+    /* Tremolo   on,pos,rate,depth */            0.0f, 10.0f, 5.0f, 0.5f,
+    /* Delay     on,pos,time,fb,mix */           0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
+    /* Reverb    on,pos,room,damp,mix */         0.0f, 12.0f, 0.5f, 0.5f, 0.3f,
     /* Bypass x9 */                              0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
     /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
     /* Cabinet    on,pos,mix,level,bypass */        0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
     /* Gate Range */                                40.0f,
     /* Input Gain */                                0.0f,
+    /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - zero defaults */
+    0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+    /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+    /* Amp on,bypass */                                1.0f, 0.0f,
 };
 // clang-format on
 
@@ -422,6 +501,8 @@ protected:
         drawControlBar();
         drawPalette(height);
         drawRack(width, height);
+        drawInputPanel(width);
+        drawStatusSidebar(width);
         drawPaletteDragGhost();
         drawPresetDropdown();
         drawSaveModal(width, height);
@@ -606,13 +687,13 @@ protected:
             return false;
         }
 
-        // --- Input panel: fixed, not scrolled - just the Gain knob ---
+        // --- Input panel: fixed in the sidebar column, not scrolled - just the Gain knob ---
         {
-            const float moduleW = getWidth() - kModuleLeft - 20.0f;
-            if (my >= kRackTop && my < kRackTop + kInputPanelH && mx >= kModuleLeft && mx <= kModuleLeft + moduleW)
+            const float sidebarX = getWidth() - kSidebarWidth - 20.0f;
+            if (my >= kRackTop && my < kRackTop + kInputPanelH && mx >= sidebarX && mx <= sidebarX + kSidebarWidth)
             {
                 const float knobCenterY = kRackTop + kModuleHeaderH + kKnobCenterYOffset;
-                const float knobX = kModuleLeft + 50.0f;
+                const float knobX = sidebarX + 50.0f;
 
                 const float chipX = knobX - kValueChipW * 0.5f;
                 const float chipY = knobCenterY + kKnobRadius + kValueChipGap;
@@ -646,34 +727,36 @@ protected:
         {
             const int pedalIndex = order[slot];
             const PedalDef& def = kPedalDefs[pedalIndex];
-            const float moduleH = kModuleHeaderH + kKnobAreaH;
-            const float moduleW = getWidth() - kModuleLeft - 20.0f;
+            const float moduleH = kPedalCardH;
+            const float moduleW = rackModuleWidth(getWidth());
 
             if (my >= y && my < y + moduleH && mx >= kModuleLeft && mx <= kModuleLeft + moduleW)
             {
-                if (pedalIndex != kAmpPedalIndex)
+                // The bypass rocker+LED toggle in the header (see
+                // drawModuleCard()/drawHeaderToggle()) - a rect hit
+                // region matching what's actually drawn there, sitting
+                // just left of the remove button.
+                const float toggleX = kModuleLeft + moduleW - kRemoveSize - 12.0f - 10.0f - kHeaderToggleW;
+                const float toggleY = y + (kModuleHeaderH - kHeaderToggleH) * 0.5f;
+                if (mx >= toggleX - 4.0f && mx <= toggleX + kHeaderToggleW + 4.0f &&
+                    my >= toggleY - 4.0f && my <= toggleY + kHeaderToggleH + 4.0f)
                 {
-                    const float sx = kModuleLeft + 12.0f;
-                    const float sy = y + (kModuleHeaderH - kSwitchSize) * 0.5f;
-                    if (mx >= sx && mx <= sx + kSwitchSize * 1.6f && my >= sy && my <= sy + kSwitchSize)
-                    {
-                        const int bypassParam = def.bypassParam;
-                        const bool currentlyBypassed = paramValues[bypassParam] > 0.5f;
-                        editParameter(bypassParam, true);
-                        setParameterValue(bypassParam, currentlyBypassed ? 0.0f : 1.0f);
-                        paramValues[bypassParam] = currentlyBypassed ? 0.0f : 1.0f;
-                        editParameter(bypassParam, false);
-                        repaint();
-                        return true;
-                    }
+                    const int bypassParam = def.bypassParam;
+                    const bool currentlyBypassed = paramValues[bypassParam] > 0.5f;
+                    editParameter(bypassParam, true);
+                    setParameterValue(bypassParam, currentlyBypassed ? 0.0f : 1.0f);
+                    paramValues[bypassParam] = currentlyBypassed ? 0.0f : 1.0f;
+                    editParameter(bypassParam, false);
+                    repaint();
+                    return true;
+                }
 
-                    const float rx = kModuleLeft + moduleW - kRemoveSize - 12.0f;
-                    const float ry = y + (kModuleHeaderH - kRemoveSize) * 0.5f;
-                    if (mx >= rx && mx <= rx + kRemoveSize && my >= ry && my <= ry + kRemoveSize)
-                    {
-                        togglePedalPresence(pedalIndex);
-                        return true;
-                    }
+                const float rx = kModuleLeft + moduleW - kRemoveSize - 12.0f;
+                const float ry = y + (kModuleHeaderH - kRemoveSize) * 0.5f;
+                if (mx >= rx && mx <= rx + kRemoveSize && my >= ry && my <= ry + kRemoveSize)
+                {
+                    togglePedalPresence(pedalIndex);
+                    return true;
                 }
 
                 const float knobCenterY = y + kModuleHeaderH + kKnobCenterYOffset;
@@ -771,7 +854,7 @@ protected:
             // made the old behavior not actually feel like drag-and-drop.
             dragModuleCurrentY = my - dragModuleGrabOffsetY;
 
-            const float moduleH = kModuleHeaderH + kKnobAreaH;
+            const float moduleH = kPedalCardH;
             const float draggedCenterY = dragModuleCurrentY + moduleH * 0.5f;
 
             // Where the floating card's center currently sits among the
@@ -836,6 +919,8 @@ protected:
     // copy so the pedal card can display e.g. the loaded IR's filename.
     void stateChanged(const char* key, const char* value) override
     {
+        const auto previousIt = stateValues.find(key);
+        const bool changed = (previousIt == stateValues.end()) || (previousIt->second != value);
         stateValues[key] = value;
 
         // See kPresetImportStateKey's comment in ChainParameters.hpp - this
@@ -845,10 +930,68 @@ protected:
         if (std::strcmp(key, kPresetImportStateKey) == 0 && value[0] != '\0')
             importPresetsFromFile(value);
 
+        // Derive the NAM sidebar's architecture caption (and, on failure,
+        // its toast) straight from the .nam file itself rather than from
+        // anything ChainPlugin pushes back - see readNamArchitecture()'s
+        // comment and kNamModelStateKey's comment in ChainParameters.hpp
+        // for why: the DSP-side push this used to rely on
+        // (Plugin::updateStateValue()) is a no-op on VST3 and CLAP in this
+        // project's vendored DPF. This key, by contrast, is always current
+        // here - DPF's file-browser glue echoes the picked path to the UI
+        // directly, on every format, and session restore delivers it the
+        // same way. `changed` guards against re-parsing/re-toasting on a
+        // redundant re-delivery of a value we've already processed.
+        if (std::strcmp(key, kNamModelStateKey) == 0 && value[0] != '\0' && changed)
+        {
+            namArchitecture = readNamArchitecture(value);
+            if (namArchitecture.empty())
+                triggerSaveToast("NAM model failed to load: " + std::filesystem::path(value).filename().string()
+                    + " (unreadable, or not a valid .nam file)");
+        }
+
         repaint();
     }
 
 private:
+    // Reads just enough of the front of a .nam file to pull out its
+    // top-level "architecture" field ("WaveNet", "LSTM", "SlimmableContainer"
+    // for A2 captures, ...) - the same field NamBlock::getArchitecture()
+    // reports on the DSP side. Deliberately not a real JSON parser: NAM/
+    // nlohmann::json are DSP-only dependencies (see CMakeLists.txt's
+    // comment on FILES_DSP vs FILES_UI), and a full parse isn't worth
+    // pulling those into the UI just to read one string for display. Real
+    // .nam files put "architecture" within roughly the first couple KB,
+    // before metadata and the (potentially many-MB) weight arrays, so a
+    // small bounded prefix read plus a plain substring scan is enough.
+    // Returns empty on any read failure or if the field isn't found in
+    // that prefix - ChainUI::stateChanged() treats that as "this doesn't
+    // look like a valid .nam file" and shows a failure toast instead of
+    // marking the model as loaded.
+    static std::string readNamArchitecture(const std::string& path)
+    {
+        std::ifstream f(path, std::ios::binary);
+        if (!f)
+            return {};
+
+        std::string buf(8192, '\0');
+        f.read(&buf[0], static_cast<std::streamsize>(buf.size()));
+        buf.resize(static_cast<size_t>(f.gcount()));
+
+        const size_t keyPos = buf.find("\"architecture\"");
+        if (keyPos == std::string::npos)
+            return {};
+        const size_t colon = buf.find(':', keyPos + 14);
+        if (colon == std::string::npos)
+            return {};
+        const size_t q1 = buf.find('"', colon + 1);
+        if (q1 == std::string::npos)
+            return {};
+        const size_t q2 = buf.find('"', q1 + 1);
+        if (q2 == std::string::npos)
+            return {};
+        return buf.substr(q1 + 1, q2 - q1 - 1);
+    }
+
     // ---------------- Presets: file I/O ----------------
 
     // HOME is the right variable on Linux/macOS, but is typically unset for
@@ -1640,7 +1783,7 @@ private:
         float y = kPedalRackTop + scrollOffset;
         for (int p : order)
         {
-            const float moduleH = kModuleHeaderH + kKnobAreaH;
+            const float moduleH = kPedalCardH;
             if (p != pedalIndex && my >= y && my < y + moduleH)
             {
                 swapPositions(pedalIndex, p);
@@ -1666,10 +1809,18 @@ private:
         return active;
     }
 
+    // The pedal rack's width, given the window's current width - shared by
+    // the paint code (drawRack()) and the hit-testing code (onMouse()) so
+    // they can't drift apart the way two copies of this formula once did.
+    static float rackModuleWidth(float width)
+    {
+        return width - kModuleLeft - kSidebarWidth - kSidebarGap - 20.0f;
+    }
+
     float totalContentHeight() const
     {
         const std::vector<int> order = getActiveOrder();
-        const float moduleH = kModuleHeaderH + kKnobAreaH;
+        const float moduleH = kPedalCardH;
         if (order.empty())
             return 0.0f;
         return static_cast<float>(order.size()) * moduleH + static_cast<float>(order.size() - 1) * kModuleGap;
@@ -2327,27 +2478,51 @@ private:
 
     void drawRack(float width, float height)
     {
-        const float moduleW = width - kModuleLeft - 20.0f;
-        drawInputPanel(moduleW);
+        const float moduleW = rackModuleWidth(width);
 
         const std::vector<int> order = getActiveOrder();
-        const float moduleH = kModuleHeaderH + kKnobAreaH;
+        const float moduleH = kPedalCardH;
         float y = kPedalRackTop + scrollOffset;
 
         save();
-        // Clipped to start below the fixed Input panel above, so a
-        // scrolled-up pedal card can't visually draw over it.
+        // Clipped to the rack's own top, so a scrolled-up pedal card can't
+        // visually draw above where the rack starts.
         scissor(kModuleLeft - 10.0f, kPedalRackTop, moduleW + 20.0f, height - kPedalRackTop);
+
+        // Signal-flow cable, one segment per gap - starts from a fixed
+        // entry jack right where the guitar signal enters the rack (the
+        // Input trim itself now lives in the sidebar - see
+        // drawInputPanel() - so this is just the visual "signal starts
+        // here" stub), then from whatever card was drawn last. Lit in
+        // that card's own accent color while it's actually processing the
+        // signal, dimmed to neutral gray while bypassed (audio still
+        // passes through when bypassed in this codebase, just unprocessed
+        // - see drawCableConnector()'s comment).
+        float prevBottomY = kRackTop;
+        Color prevColor = kColorInputAccent;
+        bool prevLit = true;
 
         for (int pedalIndex : order)
         {
             // The dragged card is drawn separately, floating on top, after
             // the rest of the stack - and skipped here without advancing y,
             // so the other cards close up around wherever it would land.
+            // No cable is drawn to/from it either - its position is
+            // transient while being dragged, a connector would just be
+            // noise following the cursor.
             if (pedalIndex == draggingModuleIndex)
                 continue;
 
+            const PedalDef& def = kPedalDefs[pedalIndex];
+            drawCableConnector(kModuleLeft + moduleW * 0.5f, prevBottomY, y, prevColor, prevLit, moduleAlpha[pedalIndex]);
+
             drawModuleCard(pedalIndex, y, moduleW);
+
+            const bool isBypassed = (def.bypassParam >= 0) && (paramValues[def.bypassParam] > 0.5f);
+            prevBottomY = y + moduleH;
+            prevColor = def.accent;
+            prevLit = !isBypassed;
+
             y += moduleH + kModuleGap;
         }
 
@@ -2365,69 +2540,81 @@ private:
             const float scrollFrac = (-scrollOffset) / std::max(1.0f, contentHeight - visibleHeight);
             const float thumbY = kPedalRackTop + 5.0f + scrollFrac * (trackH - thumbH);
 
+            // Hugs the rack's own right edge (within the gap before the
+            // status sidebar), not the window edge - the rack no longer
+            // spans the full window width now that the sidebar sits there.
+            const float scrollbarX = kModuleLeft + moduleW + 6.0f;
+
             beginPath();
-            roundedRect(width - 7.0f, kPedalRackTop + 5.0f, 4.0f, trackH, 2.0f);
+            roundedRect(scrollbarX, kPedalRackTop + 5.0f, 4.0f, trackH, 2.0f);
             fillColor(Color(255, 255, 255, 0.04f));
             fill();
             closePath();
 
             beginPath();
-            roundedRect(width - 7.0f, thumbY, 4.0f, thumbH, 2.0f);
+            roundedRect(scrollbarX, thumbY, 4.0f, thumbH, 2.0f);
             fillColor(kColorScrollbar);
             fill();
             closePath();
         }
     }
 
-    // The fixed Input panel - a Gain trim knob plus a peak meter, always
-    // drawn at kRackTop and never part of the scrollable/reorderable pedal
-    // rack below it (see kInputPedalIndex's comment). Visually it borrows
-    // the same card chrome as drawModuleCard (so it reads as part of the
-    // same rack) but skips everything that assumes a toggleable/
-    // reorderable pedal: no on/off switch, no bypass chip, no remove
-    // button, no drag handle.
-    void drawInputPanel(float moduleW)
+    // A fixed status panel filling what used to be dead space to the right
+    // of the pedal rack (cards on their own only ever use the left ~400px
+    // of the full-width card for knobs - see rackModuleWidth()'s comment).
+    // Sits below the fixed Input panel in the same sidebar column (see
+    // kStatusPanelTop). Shows things that don't belong on any one pedal
+    // card: the host's sample rate and last-seen buffer size, and the NAM
+    // block's loaded model - filename and architecture (confirms an A2
+    // capture actually loaded as A2, not just silently falling back). No
+    // Input Level meter here anymore - that used to be a second copy of
+    // the one on the Input panel, kept around for when that panel had
+    // scrolled out of view; now that the Input panel is fixed in this
+    // same column instead of at the top of the scrollable rack, it's
+    // always visible on its own and the duplicate was just clutter.
+    void drawStatusSidebar(float width)
     {
-        const float y = kRackTop;
-        const float moduleH = kInputPanelH;
+        const float x = width - kSidebarWidth - 20.0f;
+        const float y = kStatusPanelTop;
+        const float h = kSidebarHeight;
 
         beginPath();
-        rect(kModuleLeft - 30.0f, y - 15.0f, moduleW + 60.0f, moduleH + 60.0f);
-        fillPaint(boxGradient(kModuleLeft, y + 5.0f, moduleW, moduleH, 10.0f, 14.0f,
+        rect(x - 30.0f, y - 15.0f, kSidebarWidth + 60.0f, h + 60.0f);
+        fillPaint(boxGradient(x, y + 5.0f, kSidebarWidth, h, 10.0f, 14.0f,
                                Color(0, 0, 0, 0.5f), Color(0, 0, 0, 0.0f)));
         fill();
         closePath();
 
         beginPath();
-        roundedRect(kModuleLeft, y, moduleW, moduleH, 10.0f);
-        fillPaint(linearGradient(kModuleLeft, y, kModuleLeft, y + moduleH,
+        roundedRect(x, y, kSidebarWidth, h, 10.0f);
+        fillPaint(linearGradient(x, y, x, y + h,
                                   Color(kColorPanel, Color(255, 255, 255), 0.05f),
                                   Color(kColorPanel, Color(0, 0, 0), 0.2f)));
         fill();
         closePath();
         beginPath();
-        roundedRect(kModuleLeft, y, moduleW, moduleH, 10.0f);
+        roundedRect(x, y, kSidebarWidth, h, 10.0f);
         strokeWidth(1.0f);
         strokeColor(Color(255, 255, 255, 0.07f));
         stroke();
         closePath();
 
-        const Paint headerGrad = linearGradient(kModuleLeft, y, kModuleLeft, y + kModuleHeaderH,
+        const Paint headerGrad = linearGradient(x, y, x, y + kModuleHeaderH,
                                                   Color(kColorInputAccent, Color(255, 255, 255), 0.3f),
                                                   Color(kColorInputAccent, Color(0, 0, 0), 0.1f));
         beginPath();
-        roundedRect(kModuleLeft, y, moduleW, kModuleHeaderH, 10.0f);
+        roundedRect(x, y, kSidebarWidth, kModuleHeaderH, 10.0f);
         fillPaint(headerGrad);
         fill();
         closePath();
         beginPath();
-        rect(kModuleLeft, y + kModuleHeaderH * 0.5f, moduleW, kModuleHeaderH * 0.5f);
+        rect(x, y + kModuleHeaderH * 0.5f, kSidebarWidth, kModuleHeaderH * 0.5f);
         fillPaint(headerGrad);
         fill();
         closePath();
         beginPath();
-        moveTo(kModuleLeft, y + kModuleHeaderH);
-        lineTo(kModuleLeft + moduleW, y + kModuleHeaderH);
+        moveTo(x, y + kModuleHeaderH);
+        lineTo(x + kSidebarWidth, y + kModuleHeaderH);
         strokeWidth(1.0f);
         strokeColor(Color(0, 0, 0, 0.3f));
         stroke();
@@ -2437,18 +2624,182 @@ private:
         fillColor(kColorTextDark);
         textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
         textLetterSpacing(0.3f);
-        text(kModuleLeft + 16.0f, y + kModuleHeaderH * 0.5f, "Input", nullptr);
+        text(x + 16.0f, y + kModuleHeaderH * 0.5f, "Status", nullptr);
+        textLetterSpacing(0.0f);
+
+        const float labelX = x + 16.0f;
+        const float valueX = x + kSidebarWidth - 16.0f;
+        float rowY = y + kModuleHeaderH + 26.0f;
+
+        char buf[32];
+
+        std::snprintf(buf, sizeof(buf), "%.0f Hz", getSampleRate());
+        drawSidebarRow(labelX, valueX, rowY, "Sample Rate", buf);
+        rowY += 24.0f;
+
+        const int frames = static_cast<int>(displayValues[kParamBufferSize] + 0.5f);
+        if (frames > 0)
+            std::snprintf(buf, sizeof(buf), "%d smp", frames);
+        else
+            std::snprintf(buf, sizeof(buf), "-");
+        drawSidebarRow(labelX, valueX, rowY, "Buffer Size", buf);
+        rowY += 24.0f + 16.0f;
+
+        beginPath();
+        moveTo(labelX, rowY);
+        lineTo(valueX, rowY);
+        strokeWidth(1.0f);
+        strokeColor(Color(255, 255, 255, 0.08f));
+        stroke();
+        closePath();
+        rowY += 22.0f;
+
+        fontSize(11.0f);
+        fillColor(kColorTextMuted);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        textLetterSpacing(0.4f);
+        text(labelX, rowY, "NAM MODEL", nullptr);
+        textLetterSpacing(0.0f);
+        rowY += 22.0f;
+
+        // Read straight from stateValues[kNamModelStateKey], same as the
+        // pedal card's own file-loader button (drawFileLoaderButton()) -
+        // that key is kept in sync directly by stateChanged() on every
+        // pick, so it's what actually reflects reality across every plugin
+        // format (unlike the old architecture-name push from ChainPlugin,
+        // which was a no-op on VST3/CLAP - see kNamModelStateKey's comment
+        // in ChainParameters.hpp). namArchitecture is derived client-side
+        // from that same file by readNamArchitecture() in stateChanged(),
+        // and doubles as the "did this actually look like a valid .nam
+        // file" signal - empty means either nothing has been picked yet or
+        // the last pick failed, either way there's nothing to show here.
+        const auto namPathIt = stateValues.find(kNamModelStateKey);
+        const std::string namLoadedPath = (namPathIt != stateValues.end()) ? namPathIt->second : std::string();
+
+        if (namLoadedPath.empty() || namArchitecture.empty())
+        {
+            fontSize(12.5f);
+            fillColor(kColorTextMuted);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            text(labelX, rowY, "No model loaded", nullptr);
+        }
+        else
+        {
+            const bool active = paramValues[kParamNamOn] > 0.5f && paramValues[kParamNamBypass] < 0.5f;
+
+            beginPath();
+            circle(labelX + 3.5f, rowY, 4.0f);
+            fillColor(active ? kColorOn : kColorTextMuted);
+            fill();
+            closePath();
+
+            const std::string filename = std::filesystem::path(namLoadedPath).filename().string();
+            fontSize(12.5f);
+            fillColor(kColorTextPrimary);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            // See truncateToFit()'s comment - same overflow problem as the
+            // pedal card's file-loader button, just against the sidebar's
+            // right edge (valueX) instead of a button's own width.
+            const std::string fittedFilename = truncateToFit(filename, valueX - (labelX + 13.0f));
+            text(labelX + 13.0f, rowY, fittedFilename.c_str(), nullptr);
+            rowY += 19.0f;
+
+            fontSize(11.0f);
+            fillColor(kColorTextMuted);
+            const std::string fittedArch = truncateToFit(namArchitecture, valueX - (labelX + 13.0f));
+            text(labelX + 13.0f, rowY, fittedArch.c_str(), nullptr);
+        }
+    }
+
+    // One "label ......... value" row for drawStatusSidebar() above.
+    void drawSidebarRow(float labelX, float valueX, float rowY, const char* label, const char* value)
+    {
+        fontSize(12.5f);
+        fillColor(kColorTextMuted);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        text(labelX, rowY, label, nullptr);
+        fillColor(kColorTextPrimary);
+        textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
+        text(valueX, rowY, value, nullptr);
+    }
+
+    // The fixed Input panel - a Gain trim knob plus a peak meter, pinned at
+    // the top of the right-hand sidebar column (see kSidebarWidth's
+    // comment), stacked above the Status panel below it. Moved out of the
+    // pedal rack column entirely so it reads unambiguously as a fixed
+    // utility stage rather than one of the reorderable pedals (see
+    // kInputPedalIndex's comment) - it used to sit directly above the
+    // rack, same width as a pedal card, which made it easy to mistake for
+    // one at a glance even though it was never actually draggable.
+    // Visually it still borrows the same card chrome as drawModuleCard,
+    // just narrower, and skips everything that assumes a toggleable/
+    // reorderable pedal: no on/off switch, no bypass chip, no remove
+    // button, no drag handle.
+    void drawInputPanel(float width)
+    {
+        const float x = width - kSidebarWidth - 20.0f;
+        const float y = kRackTop;
+        const float moduleW = kSidebarWidth;
+        const float moduleH = kInputPanelH;
+
+        beginPath();
+        rect(x - 30.0f, y - 15.0f, moduleW + 60.0f, moduleH + 60.0f);
+        fillPaint(boxGradient(x, y + 5.0f, moduleW, moduleH, 10.0f, 14.0f,
+                               Color(0, 0, 0, 0.5f), Color(0, 0, 0, 0.0f)));
+        fill();
+        closePath();
+
+        beginPath();
+        roundedRect(x, y, moduleW, moduleH, 10.0f);
+        fillPaint(linearGradient(x, y, x, y + moduleH,
+                                  Color(kColorPanel, Color(255, 255, 255), 0.05f),
+                                  Color(kColorPanel, Color(0, 0, 0), 0.2f)));
+        fill();
+        closePath();
+        beginPath();
+        roundedRect(x, y, moduleW, moduleH, 10.0f);
+        strokeWidth(1.0f);
+        strokeColor(Color(255, 255, 255, 0.07f));
+        stroke();
+        closePath();
+
+        const Paint headerGrad = linearGradient(x, y, x, y + kModuleHeaderH,
+                                                  Color(kColorInputAccent, Color(255, 255, 255), 0.3f),
+                                                  Color(kColorInputAccent, Color(0, 0, 0), 0.1f));
+        beginPath();
+        roundedRect(x, y, moduleW, kModuleHeaderH, 10.0f);
+        fillPaint(headerGrad);
+        fill();
+        closePath();
+        beginPath();
+        rect(x, y + kModuleHeaderH * 0.5f, moduleW, kModuleHeaderH * 0.5f);
+        fillPaint(headerGrad);
+        fill();
+        closePath();
+        beginPath();
+        moveTo(x, y + kModuleHeaderH);
+        lineTo(x + moduleW, y + kModuleHeaderH);
+        strokeWidth(1.0f);
+        strokeColor(Color(0, 0, 0, 0.3f));
+        stroke();
+        closePath();
+
+        fontSize(16.0f);
+        fillColor(kColorTextDark);
+        textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+        textLetterSpacing(0.3f);
+        text(x + 16.0f, y + kModuleHeaderH * 0.5f, "Input", nullptr);
         textLetterSpacing(0.0f);
 
         fontSize(10.5f);
         fillColor(kColorTextDark.withAlpha(0.7f));
         textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
         textLetterSpacing(0.4f);
-        text(kModuleLeft + moduleW - 12.0f, y + kModuleHeaderH * 0.5f, "ALWAYS ON", nullptr);
+        text(x + moduleW - 12.0f, y + kModuleHeaderH * 0.5f, "ALWAYS ON", nullptr);
         textLetterSpacing(0.0f);
 
         const float knobCenterY = y + kModuleHeaderH + kKnobCenterYOffset;
-        const float knobX = kModuleLeft + 50.0f;
+        const float knobX = x + 50.0f;
         const bool isDraggingKnob = (draggingKnobPedal == kInputPedalIndex);
         const bool isEditingKnob = (editingKnobPedal == kInputPedalIndex);
         drawKnob(knobX, knobCenterY, kInputGainKnob, displayValues[kParamInputGain], kColorInputAccent, 1.0f,
@@ -2535,13 +2886,419 @@ private:
         text(cx, chipY + kValueChipH * 0.5f, buf, nullptr);
     }
 
+    // Emits a closed rect-ish path from (x,y) sized w x h, shaped per
+    // StompShape - either NanoVG's own roundedRect (Standard/Mini/Wide,
+    // varying only the corner radius) or a hand-built chamfered-corner path
+    // (Angled/HexCut) for a sharper "milled enclosure" silhouette real
+    // roundedRect can't produce. Caller does beginPath()/fill()-or-stroke()/
+    // closePath() around this, same convention as every other shape drawn
+    // in this file - this only emits the path commands. Reused for the
+    // card's body, its border, its drag-highlight outline, and (scissored
+    // to just the top kModuleHeaderH) its header plate, so all four always
+    // trace the exact same silhouette without duplicating corner logic.
+    void stompboxOutline(float x, float y, float w, float h, StompShape shape)
+    {
+        switch (shape)
+        {
+        case StompShape::Mini:
+            roundedRect(x, y, w, h, 6.0f);
+            break;
+        case StompShape::Wide:
+            roundedRect(x, y, w, h, 4.0f);
+            break;
+        case StompShape::Angled:
+        {
+            // Both top corners cut at 45 degrees - a rocker/treadle
+            // silhouette, echoing a wah pedal's own wedge shape.
+            const float c = 18.0f;
+            moveTo(x + c, y);
+            lineTo(x + w - c, y);
+            lineTo(x + w, y + c);
+            lineTo(x + w, y + h);
+            lineTo(x, y + h);
+            lineTo(x, y + c);
+            break;
+        }
+        case StompShape::HexCut:
+        {
+            // All four corners cut at 45 degrees - an octagonal body,
+            // reads as a fancier/boutique enclosure at a glance.
+            const float c = 13.0f;
+            moveTo(x + c, y);
+            lineTo(x + w - c, y);
+            lineTo(x + w, y + c);
+            lineTo(x + w, y + h - c);
+            lineTo(x + w - c, y + h);
+            lineTo(x + c, y + h);
+            lineTo(x, y + h - c);
+            lineTo(x, y + c);
+            break;
+        }
+        case StompShape::Standard:
+        default:
+            roundedRect(x, y, w, h, 10.0f);
+            break;
+        }
+    }
+
+    // The compact rocker+LED bypass toggle in a pedal card's header (see
+    // drawModuleCard()) - lit/thumb-right when the pedal is active (on the
+    // board and not bypassed), dark/thumb-left when bypassed. Replaces the
+    // old full-width footswitch strip at the card's bottom: same on/off
+    // meaning, just out of the reorderable chain body and far smaller, so
+    // it doesn't dominate the card. Click hit-testing in onMouse() uses a
+    // rect matching (cx, cy, kHeaderToggleW, kHeaderToggleH) here.
+    //
+    // Deliberately ignores the pedal's own accent color entirely (unlike
+    // the first version of this, which tinted the track with it) - the
+    // header plate behind it is already painted in that same accent, so a
+    // same-hue toggle washed out against its own backdrop (worst case:
+    // Delay's accent (95,225,145) is nearly identical to kColorOn). Same
+    // fix the remove button already uses one line up: a track that's
+    // always a fixed dark recess regardless of state or pedal, so it reads
+    // as a distinct control against *any* header color, with kColorOn/
+    // kColorOff (the app's one shared "is this thing active" language -
+    // same green already used for the tuner and the NAM sidebar dot) doing
+    // all the on/off signaling through the small LED alone.
+    void drawHeaderToggle(float cx, float cy, bool isOn, float alpha)
+    {
+        const float w = kHeaderToggleW;
+        const float h = kHeaderToggleH;
+        const float x = cx - w * 0.5f;
+        const float y = cy - h * 0.5f;
+        const float r = h * 0.5f;
+        const Color& ledColor = isOn ? kColorOn : kColorOff;
+
+        // Soft halo while lit - same "this is active" cue as the old
+        // footswitch's glow, just scaled down to fit the header.
+        if (isOn)
+        {
+            beginPath();
+            circle(cx, cy, h * 1.6f);
+            fillPaint(radialGradient(cx, cy, r * 0.6f, h * 1.6f,
+                                      kColorOn.withAlpha(0.4f * alpha), kColorOn.withAlpha(0.0f)));
+            fill();
+            closePath();
+        }
+
+        // Track (pill background) - always a fixed dark recess, same
+        // reasoning as the remove button's chip just above it: a constant
+        // backdrop is what keeps this legible against every pedal's own
+        // header color, not just some of them.
+        beginPath();
+        roundedRect(x, y, w, h, r);
+        fillPaint(linearGradient(x, y, x, y + h, Color(0, 0, 0, 0.35f * alpha), Color(0, 0, 0, 0.55f * alpha)));
+        fill();
+        closePath();
+        beginPath();
+        roundedRect(x, y, w, h, r);
+        strokeWidth(1.0f);
+        strokeColor(Color(255, 255, 255, (isOn ? 0.18f : 0.1f) * alpha));
+        stroke();
+        closePath();
+
+        // Thumb - slides to the lit side, brushed metal, with a small
+        // bright LED dot inset that carries the actual on/off color.
+        const float thumbR = r - 1.5f;
+        const float thumbCx = isOn ? (x + w - r) : (x + r);
+        beginPath();
+        circle(thumbCx, cy + 0.5f, thumbR);
+        fillColor(Color(0, 0, 0, 0.3f * alpha));
+        fill();
+        closePath();
+        beginPath();
+        circle(thumbCx, cy, thumbR);
+        fillPaint(radialGradient(thumbCx - thumbR * 0.3f, cy - thumbR * 0.3f, 0.5f, thumbR * 1.4f,
+                                  Color(255, 255, 255, alpha), Color(210, 210, 216, alpha)));
+        fill();
+        closePath();
+        beginPath();
+        circle(thumbCx, cy, thumbR * 0.42f);
+        fillColor(ledColor.withAlpha(alpha));
+        fill();
+        closePath();
+    }
+
+    // A short vertical cable between two cards (or between the Input panel
+    // and the first pedal) - a straight line with small jack-plug circles
+    // at each end, drawn in the kModuleGap space. Lit in the source card's
+    // accent color when it's actively processing, dimmed to neutral gray
+    // when bypassed (signal still flows through when bypassed in this
+    // codebase - just unprocessed - so the cable stays connected either
+    // way, only its color communicates "being worked on" vs "passing
+    // through").
+    void drawCableConnector(float cx, float topY, float bottomY, const Color& litColor, bool lit, float alpha)
+    {
+        const Color wireColor = lit ? litColor.withAlpha(alpha) : Color(90, 90, 98, alpha * 0.7f);
+
+        beginPath();
+        moveTo(cx, topY);
+        lineTo(cx, bottomY);
+        strokeWidth(lit ? 2.5f : 2.0f);
+        strokeColor(wireColor);
+        stroke();
+        closePath();
+
+        for (const float jackY : { topY, bottomY })
+        {
+            beginPath();
+            circle(cx, jackY, kCableJackRadius);
+            fillColor(Color(30, 30, 34, alpha));
+            fill();
+            closePath();
+            beginPath();
+            circle(cx, jackY, kCableJackRadius);
+            strokeWidth(1.0f);
+            strokeColor(wireColor);
+            stroke();
+            closePath();
+        }
+    }
+
+    // The small badge glyph drawn in each card's header (see
+    // drawModuleCard()), unique per effect type - deliberately simple
+    // shapes (a handful of primitives each) rather than full illustrations,
+    // since a header badge only ever renders at ~18px.
+    void drawStompIcon(float cx, float cy, StompIcon icon, const Color& color, float alpha)
+    {
+        strokeColor(color.withAlpha(alpha));
+        fillColor(color.withAlpha(alpha));
+        strokeWidth(1.4f);
+
+        switch (icon)
+        {
+        case StompIcon::Gate:
+        {
+            // Three upright bars, like a gate/fence - closed off.
+            for (float dx : { -5.0f, 0.0f, 5.0f })
+            {
+                beginPath();
+                moveTo(cx + dx, cy - 6.0f);
+                lineTo(cx + dx, cy + 6.0f);
+                stroke();
+                closePath();
+            }
+            break;
+        }
+        case StompIcon::Compressor:
+        {
+            // Two uneven meter bars - squashing a tall signal down.
+            beginPath();
+            roundedRect(cx - 6.0f, cy - 6.0f, 4.0f, 12.0f, 1.0f);
+            fill();
+            closePath();
+            beginPath();
+            roundedRect(cx + 2.0f, cy - 2.0f, 4.0f, 8.0f, 1.0f);
+            fill();
+            closePath();
+            break;
+        }
+        case StompIcon::Wah:
+        {
+            // A rocker/treadle wedge, viewed from the side.
+            beginPath();
+            moveTo(cx - 7.0f, cy + 6.0f);
+            lineTo(cx + 7.0f, cy + 2.0f);
+            lineTo(cx + 7.0f, cy + 6.0f);
+            closePath();
+            fill();
+            beginPath();
+            moveTo(cx - 7.0f, cy + 6.0f);
+            lineTo(cx + 7.0f, cy + 2.0f);
+            stroke();
+            closePath();
+            break;
+        }
+        case StompIcon::Overdrive:
+        {
+            // A softly clipped/flattened sine wave.
+            beginPath();
+            for (int i = 0; i <= 12; ++i)
+            {
+                const float t = static_cast<float>(i) / 12.0f;
+                const float x = cx - 7.0f + t * 14.0f;
+                float s = std::sin(t * 2.0f * static_cast<float>(M_PI));
+                s = std::max(-0.6f, std::min(0.6f, s)); // clip - the "drive"
+                const float yy = cy - s * 6.0f;
+                if (i == 0) moveTo(x, yy); else lineTo(x, yy);
+            }
+            stroke();
+            closePath();
+            break;
+        }
+        case StompIcon::Distortion:
+        {
+            // A hard-clipped, squared-off wave - more aggressive than Overdrive's.
+            beginPath();
+            moveTo(cx - 7.0f, cy);
+            lineTo(cx - 3.5f, cy);
+            lineTo(cx - 3.5f, cy - 6.0f);
+            lineTo(cx + 0.0f, cy - 6.0f);
+            lineTo(cx + 0.0f, cy + 6.0f);
+            lineTo(cx + 3.5f, cy + 6.0f);
+            lineTo(cx + 3.5f, cy);
+            lineTo(cx + 7.0f, cy);
+            stroke();
+            closePath();
+            break;
+        }
+        case StompIcon::AmpHead:
+        {
+            // A small amp-stack silhouette: cabinet body, control panel
+            // line, two knobs.
+            beginPath();
+            roundedRect(cx - 8.0f, cy - 5.0f, 16.0f, 10.0f, 1.5f);
+            stroke();
+            closePath();
+            beginPath();
+            moveTo(cx - 8.0f, cy);
+            lineTo(cx + 8.0f, cy);
+            stroke();
+            closePath();
+            beginPath();
+            circle(cx - 3.0f, cy - 2.5f, 1.3f);
+            circle(cx + 3.0f, cy - 2.5f, 1.3f);
+            fill();
+            closePath();
+            break;
+        }
+        case StompIcon::Cabinet:
+        {
+            // A speaker cone - concentric circles.
+            for (float r : { 7.0f, 4.0f, 1.5f })
+            {
+                beginPath();
+                circle(cx, cy, r);
+                stroke();
+                closePath();
+            }
+            break;
+        }
+        case StompIcon::Chorus:
+        {
+            // Two overlapping sine waves, slightly out of phase - a doubled voice.
+            for (float phase : { 0.0f, 0.9f })
+            {
+                beginPath();
+                for (int i = 0; i <= 12; ++i)
+                {
+                    const float t = static_cast<float>(i) / 12.0f;
+                    const float x = cx - 7.0f + t * 14.0f;
+                    const float yy = cy - std::sin(t * 2.0f * static_cast<float>(M_PI) + phase) * 4.5f;
+                    if (i == 0) moveTo(x, yy); else lineTo(x, yy);
+                }
+                strokeColor(color.withAlpha(alpha * (phase == 0.0f ? 1.0f : 0.55f)));
+                stroke();
+                closePath();
+            }
+            break;
+        }
+        case StompIcon::Phaser:
+        {
+            // A swirl/spiral.
+            beginPath();
+            const int steps = 24;
+            for (int i = 0; i <= steps; ++i)
+            {
+                const float t = static_cast<float>(i) / steps;
+                const float ang = t * 3.0f * static_cast<float>(M_PI);
+                const float r = 1.0f + t * 6.5f;
+                const float x = cx + std::cos(ang) * r;
+                const float yy = cy + std::sin(ang) * r;
+                if (i == 0) moveTo(x, yy); else lineTo(x, yy);
+            }
+            stroke();
+            closePath();
+            break;
+        }
+        case StompIcon::Tremolo:
+        {
+            // A sine wave with amplitude tick marks - modulated level.
+            beginPath();
+            for (int i = 0; i <= 12; ++i)
+            {
+                const float t = static_cast<float>(i) / 12.0f;
+                const float x = cx - 7.0f + t * 14.0f;
+                const float yy = cy - std::sin(t * 3.0f * static_cast<float>(M_PI)) * 5.0f;
+                if (i == 0) moveTo(x, yy); else lineTo(x, yy);
+            }
+            stroke();
+            closePath();
+            break;
+        }
+        case StompIcon::Delay:
+        {
+            // Repeating echo arcs, fading out.
+            float a = alpha;
+            for (float r : { 2.0f, 4.5f, 7.0f })
+            {
+                beginPath();
+                strokeColor(color.withAlpha(a));
+                // A partial arc via a short polyline quarter-circle.
+                const int steps = 8;
+                for (int i = 0; i <= steps; ++i)
+                {
+                    const float ang = -0.9f + (static_cast<float>(i) / steps) * 1.8f;
+                    const float x = cx - 2.0f + std::cos(ang) * r;
+                    const float yy = cy + std::sin(ang) * r;
+                    if (i == 0) moveTo(x, yy); else lineTo(x, yy);
+                }
+                stroke();
+                closePath();
+                a *= 0.6f;
+            }
+            break;
+        }
+        case StompIcon::Reverb:
+        {
+            // A spring coil, viewed from the side - a zigzag.
+            beginPath();
+            const int coils = 5;
+            for (int i = 0; i <= coils; ++i)
+            {
+                const float t = static_cast<float>(i) / coils;
+                const float x = cx - 7.0f + t * 14.0f;
+                const float yy = cy + ((i % 2 == 0) ? -4.5f : 4.5f);
+                if (i == 0) moveTo(x, yy); else lineTo(x, yy);
+            }
+            stroke();
+            closePath();
+            break;
+        }
+        case StompIcon::Neural:
+        {
+            // A small node graph - captures "neural network" without
+            // trying to draw an actual amp/cab.
+            const float nodes[3][2] = { { -6.0f, 5.0f }, { -6.0f, -5.0f }, { 6.0f, 0.0f } };
+            beginPath();
+            moveTo(cx + nodes[0][0], cy + nodes[0][1]);
+            lineTo(cx + nodes[2][0], cy + nodes[2][1]);
+            moveTo(cx + nodes[1][0], cy + nodes[1][1]);
+            lineTo(cx + nodes[2][0], cy + nodes[2][1]);
+            stroke();
+            closePath();
+            for (const auto& n : nodes)
+            {
+                beginPath();
+                circle(cx + n[0], cy + n[1], 2.2f);
+                fill();
+                closePath();
+            }
+            break;
+        }
+        case StompIcon::None:
+        default:
+            break;
+        }
+    }
+
     // Draws one pedal card at the given top-Y. Used both for the normal
     // stacked rack and (with a live, cursor-following y) for whichever card
     // is currently being dragged to reorder.
     void drawModuleCard(int pedalIndex, float y, float moduleW)
     {
             const PedalDef& def = kPedalDefs[pedalIndex];
-            const float moduleH = kModuleHeaderH + kKnobAreaH;
+            const float moduleH = kPedalCardH;
             const bool isDraggingThis = (pedalIndex == draggingModuleIndex);
             const bool isBypassed = (def.bypassParam >= 0) && (paramValues[def.bypassParam] > 0.5f);
             const float alpha = moduleAlpha[pedalIndex];
@@ -2558,6 +3315,8 @@ private:
             // Drop shadow, for a bit of depth against the rack background -
             // bigger and darker while being dragged, so the card reads as
             // physically "picked up" off the rack rather than just outlined.
+            // A plain soft-edged rect regardless of the card's own shape -
+            // real shadows blur past any silhouette detail anyway.
             const float shadowOffset = isDraggingThis ? 12.0f : 5.0f;
             const float shadowFeather = isDraggingThis ? 26.0f : 14.0f;
             const float shadowAlpha = isDraggingThis ? 0.75f : 0.5f;
@@ -2568,16 +3327,17 @@ private:
             fill();
             closePath();
 
-            // Body - a subtle brushed-metal gradient rather than a flat fill.
+            // Body - a subtle brushed-metal gradient rather than a flat
+            // fill, shaped per def.shape (see stompboxOutline()'s comment).
             beginPath();
-            roundedRect(kModuleLeft, drawY, moduleW, moduleH, 10.0f);
+            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, def.shape);
             fillPaint(linearGradient(kModuleLeft, drawY, kModuleLeft, drawY + moduleH,
                                       Color(kColorPanel, Color(255, 255, 255), 0.05f).withAlpha(alpha),
                                       Color(kColorPanel, Color(0, 0, 0), 0.2f).withAlpha(alpha)));
             fill();
             closePath();
             beginPath();
-            roundedRect(kModuleLeft, drawY, moduleW, moduleH, 10.0f);
+            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, def.shape);
             strokeWidth(1.0f);
             strokeColor(Color(255, 255, 255, 0.07f * alpha));
             stroke();
@@ -2586,7 +3346,7 @@ private:
             if (isDraggingThis)
             {
                 beginPath();
-                roundedRect(kModuleLeft, drawY, moduleW, moduleH, 10.0f);
+                stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, def.shape);
                 strokeColor(cardAccent.withAlpha(alpha));
                 strokeWidth(2.5f);
                 stroke();
@@ -2594,20 +3354,34 @@ private:
             }
 
             // Header - glossy top plate in the pedal's accent color (grayed
-            // out via cardAccent while bypassed).
+            // out via cardAccent while bypassed). Drawn as the *same*
+            // full-card outline, scissored down to just the header strip -
+            // so its corners automatically follow the card's own shape
+            // without separate per-shape header logic.
             const Paint headerGrad = linearGradient(kModuleLeft, drawY, kModuleLeft, drawY + kModuleHeaderH,
                                                       Color(cardAccent, Color(255, 255, 255), 0.3f).withAlpha(alpha),
                                                       Color(cardAccent, Color(0, 0, 0), 0.1f).withAlpha(alpha));
+            // intersectScissor(), not scissor(): drawRack() already has a
+            // scissor active here, bounding every card to the visible rack
+            // area (see its own comment) - DPF's plain scissor() calls
+            // nvgScissor(), which *replaces* the current clip rect instead
+            // of narrowing it (see intersectScissor()'s doc comment in
+            // DPF's NanoVG.hpp). Using it here silently discarded that
+            // outer bound and re-clipped to just this header's own local
+            // rect - harmless while the card was on-screen (drawY already
+            // inside the visible range so the two clips coincided), but
+            // once a card scrolled up past the top of the rack, drawY
+            // went negative/off-screen and this header happily painted
+            // there anyway, above the rack into the top bar - exactly the
+            // "bleeds upward while scrolling" bug.
+            save();
+            intersectScissor(kModuleLeft, drawY, moduleW, kModuleHeaderH);
             beginPath();
-            roundedRect(kModuleLeft, drawY, moduleW, kModuleHeaderH, 10.0f);
+            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, def.shape);
             fillPaint(headerGrad);
             fill();
             closePath();
-            beginPath();
-            rect(kModuleLeft, drawY + kModuleHeaderH * 0.5f, moduleW, kModuleHeaderH * 0.5f);
-            fillPaint(headerGrad);
-            fill();
-            closePath();
+            restore();
             beginPath();
             moveTo(kModuleLeft, drawY + kModuleHeaderH);
             lineTo(kModuleLeft + moduleW, drawY + kModuleHeaderH);
@@ -2616,82 +3390,19 @@ private:
             stroke();
             closePath();
 
+            // Icon badge - unique per effect type, sits where the old
+            // header toggle switch used to (that's now the footswitch at
+            // the card's bottom instead - see below).
+            drawStompIcon(kModuleLeft + 24.0f, drawY + kModuleHeaderH * 0.5f, def.icon, kColorTextDark, alpha);
+
             fontSize(16.0f);
             fillColor(kColorTextDark.withAlpha(alpha));
             textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
             textLetterSpacing(0.3f);
-            text(kModuleLeft + (pedalIndex == kAmpPedalIndex ? 16.0f : 44.0f), drawY + kModuleHeaderH * 0.5f, def.name, nullptr);
+            text(kModuleLeft + 44.0f, drawY + kModuleHeaderH * 0.5f, def.name, nullptr);
             textLetterSpacing(0.0f);
 
-            if (pedalIndex != kAmpPedalIndex)
             {
-                const bool isOn = !isBypassed;
-                const float sx = kModuleLeft + 12.0f;
-                const float sy = drawY + (kModuleHeaderH - kSwitchSize) * 0.5f;
-                const float trackW = kSwitchSize * 1.6f;
-
-                // Soft halo bleeding off the switch while lit, like a real
-                // LED - the main "this is active" cue, so off (no halo) is
-                // unambiguous without needing to dim anything else.
-                if (isOn)
-                {
-                    beginPath();
-                    rect(sx - 14.0f, sy - 14.0f, trackW + 28.0f, kSwitchSize + 28.0f);
-                    fillPaint(radialGradient(sx + trackW * 0.5f, sy + kSwitchSize * 0.5f, 2.0f, 22.0f,
-                                              kColorOn.withAlpha(0.45f * alpha), kColorOn.withAlpha(0.0f)));
-                    fill();
-                    closePath();
-                }
-
-                // Contact shadow under the track, matching the knobs' depth
-                // treatment so the switch feels like the same hardware family.
-                beginPath();
-                roundedRect(sx, sy + 1.5f, trackW, kSwitchSize, kSwitchSize * 0.5f);
-                fillColor(Color(0, 0, 0, 0.35f * alpha));
-                fill();
-                closePath();
-
-                // Track - glossy when lit, a duller inset groove when not,
-                // so "off" reads as an unpowered switch rather than a faded
-                // copy of the "on" one.
-                beginPath();
-                roundedRect(sx, sy, trackW, kSwitchSize, kSwitchSize * 0.5f);
-                fillPaint(linearGradient(sx, sy, sx, sy + kSwitchSize,
-                                          Color(isOn ? kColorOn : kColorOff, Color(255, 255, 255), isOn ? 0.3f : 0.1f).withAlpha(alpha),
-                                          Color(isOn ? kColorOn : kColorOff, Color(0, 0, 0), isOn ? 0.05f : 0.3f).withAlpha(alpha)));
-                fill();
-                closePath();
-                beginPath();
-                roundedRect(sx, sy, trackW, kSwitchSize, kSwitchSize * 0.5f);
-                strokeWidth(1.0f);
-                strokeColor(Color(0, 0, 0, 0.4f * alpha));
-                stroke();
-                closePath();
-
-                // Thumb - a small glossy puck (radial highlight + its own
-                // contact shadow) instead of a flat disc, echoing the same
-                // glossy-metal language as the knob faces.
-                const float thumbCx = isOn ? sx + trackW - kSwitchSize * 0.5f : sx + kSwitchSize * 0.5f;
-                const float thumbCy = sy + kSwitchSize * 0.5f;
-                beginPath();
-                circle(thumbCx, thumbCy + 0.8f, kSwitchSize * 0.42f);
-                fillColor(Color(0, 0, 0, 0.3f * alpha));
-                fill();
-                closePath();
-                beginPath();
-                circle(thumbCx, thumbCy, kSwitchSize * 0.4f);
-                fillPaint(radialGradient(thumbCx - kSwitchSize * 0.12f, thumbCy - kSwitchSize * 0.12f, 0.5f, kSwitchSize * 0.5f,
-                                          Color(255, 255, 255, alpha),
-                                          Color(isOn ? 232 : 200, isOn ? 232 : 200, isOn ? 238 : 208, alpha)));
-                fill();
-                closePath();
-                beginPath();
-                circle(thumbCx, thumbCy, kSwitchSize * 0.4f);
-                strokeWidth(0.75f);
-                strokeColor(Color(0, 0, 0, 0.25f * alpha));
-                stroke();
-                closePath();
-
                 // A neutral dark chip rather than a permanently red one - a
                 // fixed bright red clashed with pedals whose own accent is
                 // already in the red family (e.g. Screamer). It only turns
@@ -2700,43 +3411,6 @@ private:
                 const float ry = drawY + (kModuleHeaderH - kRemoveSize) * 0.5f;
                 const bool removeHovered = (lastMouseX >= rx - 4.0f && lastMouseX <= rx + kRemoveSize + 4.0f &&
                                              lastMouseY >= ry - 4.0f && lastMouseY <= ry + kRemoveSize + 4.0f);
-
-                // Bypass status chip, sitting between the name and the
-                // remove button - a proper pill badge (dark fill, faint
-                // border, unlit dot echoing the switch's own LED language)
-                // instead of bare text crammed into the header.
-                if (isBypassed)
-                {
-                    const float chipH = kSwitchSize;
-                    const float chipW = 78.0f;
-                    const float chipX = rx - chipW - 10.0f;
-                    const float chipY = drawY + (kModuleHeaderH - chipH) * 0.5f;
-
-                    beginPath();
-                    roundedRect(chipX, chipY, chipW, chipH, chipH * 0.5f);
-                    fillColor(Color(0, 0, 0, 0.3f * alpha));
-                    fill();
-                    closePath();
-                    beginPath();
-                    roundedRect(chipX, chipY, chipW, chipH, chipH * 0.5f);
-                    strokeWidth(1.0f);
-                    strokeColor(Color(255, 255, 255, 0.12f * alpha));
-                    stroke();
-                    closePath();
-
-                    beginPath();
-                    circle(chipX + 14.0f, chipY + chipH * 0.5f, 3.0f);
-                    fillColor(Color(255, 255, 255, 0.25f * alpha));
-                    fill();
-                    closePath();
-
-                    fontSize(9.5f);
-                    fillColor(kColorTextMuted.withAlpha(alpha));
-                    textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
-                    textLetterSpacing(0.5f);
-                    text(chipX + 23.0f, chipY + chipH * 0.5f + 0.5f, "BYPASS", nullptr);
-                    textLetterSpacing(0.0f);
-                }
 
                 beginPath();
                 circle(rx + kRemoveSize * 0.5f, ry + kRemoveSize * 0.5f, kRemoveSize * 0.5f);
@@ -2758,17 +3432,13 @@ private:
                 fillColor(Color(255, 255, 255, alpha * (removeHovered ? 1.0f : 0.8f)));
                 textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
                 text(rx + kRemoveSize * 0.5f, ry + kRemoveSize * 0.5f + 1.0f, "x", nullptr);
-            }
-            else
-            {
-                fontSize(10.5f);
-                fillColor(kColorTextDark.withAlpha(alpha));
-                textAlign(ALIGN_RIGHT | ALIGN_MIDDLE);
-                textLetterSpacing(0.4f);
-                text(kModuleLeft + moduleW - 12.0f, drawY + kModuleHeaderH * 0.5f, "ALWAYS ON", nullptr);
-                textLetterSpacing(0.0f);
-            }
 
+                // Bypass toggle - see drawHeaderToggle()'s comment. Same
+                // rx-relative math as onMouse()'s hit test for this control.
+                const float toggleX = rx - 10.0f - kHeaderToggleW;
+                drawHeaderToggle(toggleX + kHeaderToggleW * 0.5f, drawY + kModuleHeaderH * 0.5f,
+                                  !isBypassed, alpha);
+            }
             const float knobCenterY = drawY + kModuleHeaderH + kKnobCenterYOffset;
             float knobX = kModuleLeft + 50.0f;
             for (size_t k = 0; k < def.knobs.size(); ++k)
@@ -2784,14 +3454,48 @@ private:
                 drawFileLoaderButton(knobX, knobCenterY, def, knobAlpha);
     }
 
-    // The "Load..." button on a file-loader pedal card (currently just
-    // Cabinet) - shows the loaded file's name once one has been picked,
-    // or an invitation to load one otherwise.
+    // Shortens `s` with a trailing "..." so it renders no wider than
+    // maxWidth at the currently active font (caller must already have
+    // called fontSize()/fontFace()) - measured via textBounds() rather
+    // than guessing a fixed character count, since filenames are
+    // proportionally spaced and their width per character varies a lot
+    // (e.g. "i" vs "W"). Shrinks one byte at a time from the end, which
+    // for the ASCII/Latin-1 filenames this is used for (amp/IR capture
+    // names) is exact; a multi-byte UTF-8 character straddling the cut
+    // point would render as one garbled glyph right before the ellipsis,
+    // a minor cosmetic edge case not worth a full UTF-8-aware truncation
+    // pass here.
+    std::string truncateToFit(const std::string& s, float maxWidth)
+    {
+        DGL_NAMESPACE::Rectangle<float> bounds;
+        if (textBounds(0.0f, 0.0f, s.c_str(), nullptr, bounds) <= maxWidth)
+            return s;
+
+        static constexpr const char* kEllipsis = "...";
+        std::string truncated = s;
+        while (!truncated.empty())
+        {
+            truncated.pop_back();
+            const std::string attempt = truncated + kEllipsis;
+            if (textBounds(0.0f, 0.0f, attempt.c_str(), nullptr, bounds) <= maxWidth)
+                return attempt;
+        }
+        return kEllipsis;
+    }
+
+    // The "Load..." button on a file-loader pedal card (Cabinet or NAM) -
+    // shows the loaded file's name once one has been picked, or def's own
+    // fileLoaderLabel invitation otherwise (the two load different kinds
+    // of files, so this isn't one hardcoded string for both). Long
+    // filenames (NAM capture names in particular routinely run 40+
+    // characters - gear name, mic, settings all crammed in) get truncated
+    // with an ellipsis rather than overflowing past the button into
+    // whatever's drawn next to it - see truncateToFit() above.
     void drawFileLoaderButton(float x, float centerY, const PedalDef& def, float alpha)
     {
         const float y = centerY - kFileLoaderH * 0.5f;
 
-        std::string label = "Load IR File...";
+        std::string label = def.fileLoaderLabel;
         bool loaded = false;
         const auto it = stateValues.find(def.stateKey != nullptr ? def.stateKey : "");
         if (it != stateValues.end() && !it->second.empty())
@@ -2817,7 +3521,9 @@ private:
         fontSize(11.5f);
         fillColor((loaded ? kColorTextPrimary : kColorTextMuted).withAlpha(alpha));
         textAlign(ALIGN_CENTER | ALIGN_MIDDLE);
-        text(x + kFileLoaderW * 0.5f, y + kFileLoaderH * 0.5f, label.c_str(), nullptr);
+        static constexpr float kFileLoaderTextPadding = 10.0f;
+        const std::string fitted = truncateToFit(label, kFileLoaderW - kFileLoaderTextPadding);
+        text(x + kFileLoaderW * 0.5f, y + kFileLoaderH * 0.5f, fitted.c_str(), nullptr);
     }
 
     void drawKnob(float cx, float cy, const KnobDef& knob, float value, const Color& accent, float alpha, bool isDragging, bool isEditing)
@@ -3009,6 +3715,12 @@ private:
     // Local mirror of DPF State key/value pairs (currently just the
     // Cabinet block's loaded IR path), kept in sync via stateChanged().
     std::map<std::string, std::string> stateValues;
+
+    // The currently loaded NAM model's architecture name, as read straight
+    // out of the .nam file by readNamArchitecture() - see stateChanged()'s
+    // kNamModelStateKey branch. Empty means either no model has been
+    // picked yet or the last pick didn't look like a valid .nam file.
+    std::string namArchitecture;
 
     DISTRHO_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(ChainUI)
 };

@@ -26,6 +26,7 @@
 #include "ScreamerBlock.hpp"
 #include "DistortionBlock.hpp"
 #include "CabinetBlock.hpp"
+#include "NamBlock.hpp"
 #include "AmpBlock.hpp"
 #include "DelayBlock.hpp"
 #include "ReverbBlock.hpp"
@@ -62,7 +63,7 @@ class ChainPlugin : public Plugin
 {
 public:
     ChainPlugin()
-        : Plugin(kParamCount, kProgramCount, 2) // states: Cabinet IR file path, preset-import file path
+        : Plugin(kParamCount, kProgramCount, 3) // states: Cabinet IR file path, preset-import file path, NAM model file path
     {
         gateBlock.setThresholdDB(-50.0f);
         gateBlock.setAttackMs(5.0f);
@@ -88,6 +89,10 @@ public:
 
         cabinetBlock.setMix(1.0f);
         cabinetBlock.setLevel(0.0f);
+
+        namBlock.setInputTrim(0.0f);
+        namBlock.setOutputTrim(0.0f);
+        namBlock.setMix(1.0f);
 
         ampBlock.setDriveDB(0.0f);
         ampBlock.setBassDB(0.0f);
@@ -116,8 +121,10 @@ public:
 
         // Default pedalboard order:
         // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Distortion(4) ->
-        // Amp(5) -> Cabinet(6) -> Chorus(7) -> Phaser(8) -> Tremolo(9) ->
-        // Delay(10) -> Reverb(11)
+        // Amp(5) -> Cabinet(6) -> NAM(7) -> Chorus(8) -> Phaser(9) ->
+        // Tremolo(10) -> Delay(11) -> Reverb(12). NAM sits right after
+        // Cabinet - see kParamNamPosition's case in initParameter() below
+        // for why.
         chain.addBlock(&gateBlock, 0);
         chain.addBlock(&compBlock, 1);
         chain.addBlock(&wahBlock, 2);
@@ -125,14 +132,17 @@ public:
         chain.addBlock(&distortionBlock, 4);
         chain.addBlock(&ampBlock, 5);
         chain.addBlock(&cabinetBlock, 6);
-        chain.addBlock(&chorusBlock, 7);
-        chain.addBlock(&phaserBlock, 8);
-        chain.addBlock(&tremoloBlock, 9);
-        chain.addBlock(&delayBlock, 10);
-        chain.addBlock(&reverbBlock, 11);
+        chain.addBlock(&namBlock, 7);
+        chain.addBlock(&chorusBlock, 8);
+        chain.addBlock(&phaserBlock, 9);
+        chain.addBlock(&tremoloBlock, 10);
+        chain.addBlock(&delayBlock, 11);
+        chain.addBlock(&reverbBlock, 12);
         chain.rebuildOrder();
 
-        // Amp is always part of the signal path.
+        // Amp starts on and un-bypassed (ampOn=true, ampBypass=false above),
+        // matching its previous unconditional always-on behavior exactly -
+        // see kParamAmpOn/Bypass's comment in ChainParameters.hpp.
         chain.setEnabled(&ampBlock, true);
 
         // Everything else starts disabled except Screamer, which matches
@@ -143,6 +153,7 @@ public:
         chain.setEnabled(&screamerBlock, true);
         chain.setEnabled(&distortionBlock, false);
         chain.setEnabled(&cabinetBlock, false);
+        chain.setEnabled(&namBlock, false);
         chain.setEnabled(&chorusBlock, false);
         chain.setEnabled(&phaserBlock, false);
         chain.setEnabled(&tremoloBlock, false);
@@ -163,6 +174,7 @@ public:
         screamerBlock.setSampleRate(initialSampleRate);
         distortionBlock.setSampleRate(initialSampleRate);
         cabinetBlock.setSampleRate(initialSampleRate);
+        namBlock.setSampleRate(initialSampleRate);
         ampBlock.setSampleRate(initialSampleRate);
         chorusBlock.setSampleRate(initialSampleRate);
         phaserBlock.setSampleRate(initialSampleRate);
@@ -195,7 +207,7 @@ protected:
         case kParamGatePosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Gate Position"; parameter.symbol = "gate_position";
-            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamGateThreshold:
             parameter.name = "Gate Threshold"; parameter.symbol = "gate_threshold"; parameter.unit = "dB";
@@ -235,7 +247,7 @@ protected:
         case kParamCompPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Compressor Position"; parameter.symbol = "comp_position";
-            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamCompThreshold:
             parameter.name = "Compressor Threshold"; parameter.symbol = "comp_threshold"; parameter.unit = "dB";
@@ -267,7 +279,7 @@ protected:
         case kParamWahPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Wah Chain Position"; parameter.symbol = "wah_chain_position";
-            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamWahPedal:
             parameter.name = "Wah Pedal"; parameter.symbol = "wah_pedal";
@@ -287,7 +299,7 @@ protected:
         case kParamScreamerPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Screamer Position"; parameter.symbol = "screamer_position";
-            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamScreamerDrive:
             parameter.name = "Screamer Drive"; parameter.symbol = "screamer_drive"; parameter.unit = "x";
@@ -312,7 +324,7 @@ protected:
         case kParamDistortionPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Distortion Position"; parameter.symbol = "distortion_position";
-            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamDistortionDrive:
             parameter.name = "Distortion Drive"; parameter.symbol = "distortion_drive"; parameter.unit = "x";
@@ -336,7 +348,7 @@ protected:
         case kParamAmpPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Amp Position"; parameter.symbol = "amp_position";
-            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamAmpDrive:
             parameter.name = "Amp Drive"; parameter.symbol = "amp_drive"; parameter.unit = "dB";
@@ -358,6 +370,16 @@ protected:
             parameter.name = "Amp Volume"; parameter.symbol = "amp_volume"; parameter.unit = "dB";
             parameter.ranges.def = 0.0f; parameter.ranges.min = -24.0f; parameter.ranges.max = 12.0f;
             break;
+        case kParamAmpOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Amp On"; parameter.symbol = "amp_on";
+            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamAmpBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Amp Bypass"; parameter.symbol = "amp_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
 
         // --- Cabinet (convolves with a loaded speaker-cab impulse
         // response - see core/CabinetBlock.hpp. The IR file path itself
@@ -370,7 +392,7 @@ protected:
         case kParamCabinetPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Cabinet Position"; parameter.symbol = "cabinet_position";
-            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamCabinetMix:
             parameter.name = "Cabinet Mix"; parameter.symbol = "cabinet_mix";
@@ -395,7 +417,7 @@ protected:
         case kParamChorusPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Chorus Position"; parameter.symbol = "chorus_position";
-            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamChorusRate:
             parameter.name = "Chorus Rate"; parameter.symbol = "chorus_rate"; parameter.unit = "Hz";
@@ -419,7 +441,7 @@ protected:
         case kParamPhaserPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Phaser Position"; parameter.symbol = "phaser_position";
-            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamPhaserRate:
             parameter.name = "Phaser Rate"; parameter.symbol = "phaser_rate"; parameter.unit = "Hz";
@@ -443,7 +465,7 @@ protected:
         case kParamTremoloPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Tremolo Position"; parameter.symbol = "tremolo_position";
-            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamTremoloRate:
             parameter.name = "Tremolo Rate"; parameter.symbol = "tremolo_rate"; parameter.unit = "Hz";
@@ -463,7 +485,7 @@ protected:
         case kParamDelayPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Delay Position"; parameter.symbol = "delay_position";
-            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 11.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamDelayTime:
             parameter.name = "Delay Time"; parameter.symbol = "delay_time"; parameter.unit = "ms";
@@ -487,7 +509,7 @@ protected:
         case kParamReverbPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Reverb Position"; parameter.symbol = "reverb_position";
-            parameter.ranges.def = 11.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            parameter.ranges.def = 12.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
             break;
         case kParamReverbRoomSize:
             parameter.name = "Reverb Room Size"; parameter.symbol = "reverb_room_size";
@@ -582,11 +604,63 @@ protected:
             parameter.name = "Tuner Frequency"; parameter.symbol = "tuner_frequency"; parameter.unit = "Hz";
             parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 2000.0f;
             break;
+        case kParamBufferSize:
+            parameter.hints |= kParameterIsOutput;
+            parameter.name = "Buffer Size"; parameter.symbol = "buffer_size"; parameter.unit = "smp";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 16384.0f;
+            break;
 
         case kParamAmpType:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Amp Type"; parameter.symbol = "amp_type";
             parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = float(ampforge::kAmpVoicingCount - 1);
+            break;
+
+        // --- NAM (a neural-network capture of one specific real amp/pedal/
+        // cab, loaded from a .nam file - see core/NamBlock.hpp. The model
+        // file path itself is DPF State, not a parameter; see initState()
+        // below) ---
+        case kParamNamOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "NAM On"; parameter.symbol = "nam_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamNamPosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "NAM Position"; parameter.symbol = "nam_position";
+            // Slot 7, right after Cabinet (6) and before Chorus (now 8,
+            // shifted up from 7 to make room - see Chorus/Phaser/Tremolo/
+            // Delay/Reverb's own position cases above, all bumped by one).
+            // NAM is a capture of a real amp/pedal/cab, so it belongs
+            // tonally alongside Amp/Cabinet, processing a relatively clean
+            // guitar signal - not at the very end of the chain, which
+            // would run it on already-modulated/delayed/reverberated
+            // audio a real amp capture was never trained on. (An earlier
+            // version defaulted NAM to the end (12) purely to avoid
+            // reusing Chorus's old slot (7) and the position-collision bug
+            // that caused - see EffectChain.hpp/kPedalDefs' history - but
+            // that only fixed the crash, not where it tonally belongs; the
+            // real fix is this renumbering, which gives every block from
+            // Gate(0) through Reverb(12) - 13 blocks total including NAM -
+            // its own unique slot again.)
+            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            break;
+        case kParamNamInputTrim:
+            parameter.name = "NAM Input Trim"; parameter.symbol = "nam_input_trim"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = -24.0f; parameter.ranges.max = 24.0f;
+            break;
+        case kParamNamOutputLevel:
+            parameter.name = "NAM Output Level"; parameter.symbol = "nam_output_level"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = -24.0f; parameter.ranges.max = 12.0f;
+            break;
+        case kParamNamMix:
+            parameter.name = "NAM Mix"; parameter.symbol = "nam_mix";
+            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamNamBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "NAM Bypass"; parameter.symbol = "nam_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
             break;
         }
     }
@@ -637,6 +711,8 @@ protected:
         case kParamAmpMid:           return ampMid;
         case kParamAmpTreble:        return ampTreble;
         case kParamAmpVolume:        return ampVolume;
+        case kParamAmpOn:            return ampOn ? 1.0f : 0.0f;
+        case kParamAmpBypass:        return ampBypass ? 1.0f : 0.0f;
 
         case kParamCabinetOn:       return cabinetOn ? 1.0f : 0.0f;
         case kParamCabinetPosition: return cabinetPosition;
@@ -691,8 +767,16 @@ protected:
 
         case kParamTunerOn:           return tunerOn ? 1.0f : 0.0f;
         case kParamTunerFrequency:    return tunerFrequency;
+        case kParamBufferSize:        return bufferSize;
 
         case kParamAmpType:           return ampType;
+
+        case kParamNamOn:           return namOn ? 1.0f : 0.0f;
+        case kParamNamPosition:     return namPosition;
+        case kParamNamInputTrim:    return namInputTrim;
+        case kParamNamOutputLevel:  return namOutputLevel;
+        case kParamNamMix:          return namMix;
+        case kParamNamBypass:       return namBypass ? 1.0f : 0.0f;
 
         default: return 0.0f;
         }
@@ -779,6 +863,10 @@ protected:
             ampTreble = value; ampBlock.setTrebleDB(value); break;
         case kParamAmpVolume:
             ampVolume = value; ampBlock.setVolumeDB(value); break;
+        case kParamAmpOn:
+            ampOn = value > 0.5f; chain.setEnabled(&ampBlock, ampOn && !ampBypass); break;
+        case kParamAmpBypass:
+            ampBypass = value > 0.5f; chain.setEnabled(&ampBlock, ampOn && !ampBypass); break;
 
         case kParamCabinetOn:
             cabinetOn = value > 0.5f; chain.setEnabled(&cabinetBlock, cabinetOn && !cabinetBypass); break;
@@ -893,6 +981,19 @@ protected:
             ampType = value;
             ampBlock.setAmpType(static_cast<int>(std::round(value)));
             break;
+
+        case kParamNamOn:
+            namOn = value > 0.5f; chain.setEnabled(&namBlock, namOn && !namBypass); break;
+        case kParamNamPosition:
+            namPosition = value; chain.setPosition(&namBlock, static_cast<int>(std::round(value))); break;
+        case kParamNamInputTrim:
+            namInputTrim = value; namBlock.setInputTrim(value); break;
+        case kParamNamOutputLevel:
+            namOutputLevel = value; namBlock.setOutputTrim(value); break;
+        case kParamNamMix:
+            namMix = value; namBlock.setMix(value); break;
+        case kParamNamBypass:
+            namBypass = value > 0.5f; chain.setEnabled(&namBlock, namOn && !namBypass); break;
         }
     }
 
@@ -905,6 +1006,7 @@ protected:
         screamerBlock.setSampleRate(newSampleRate);
         distortionBlock.setSampleRate(newSampleRate);
         cabinetBlock.setSampleRate(newSampleRate);
+        namBlock.setSampleRate(newSampleRate);
         ampBlock.setSampleRate(newSampleRate);
         chorusBlock.setSampleRate(newSampleRate);
         phaserBlock.setSampleRate(newSampleRate);
@@ -971,6 +1073,14 @@ protected:
             state.hints = kStateIsFilenamePath | kStateIsOnlyForUI;
             state.defaultValue = "";
         }
+        else if (index == 2)
+        {
+            state.key = kNamModelStateKey;
+            state.label = "NAM Model File";
+            state.description = "A .nam capture file (NeuralAmpModelerCore, A1 or A2) loaded into the NAM block.";
+            state.hints = kStateIsFilenamePath;
+            state.defaultValue = "";
+        }
     }
 
     // Called by the host when it wants to persist our state (saving a
@@ -979,26 +1089,65 @@ protected:
     {
         if (std::strcmp(key, kCabinetIRStateKey) == 0)
             return String(cabinetIRPath.c_str());
+        if (std::strcmp(key, kNamModelStateKey) == 0)
+            return String(namModelPath.c_str());
         return String();
     }
 
     // Called by the host to restore previously-saved state (or when the UI
     // asks us to load a new file via UI::requestStateFile()). Loading the
-    // WAV itself is safe to do here even though this isn't the audio
-    // thread - see CabinetBlock::loadImpulseResponse()'s own comment.
+    // WAV/NAM file itself is safe to do here even though this isn't the
+    // audio thread - see CabinetBlock::loadImpulseResponse()'s own comment
+    // (NamBlock::loadModel() follows the identical double-buffer pattern).
     void setState(const char* key, const char* value) override
     {
-        if (std::strcmp(key, kCabinetIRStateKey) != 0)
-            return;
-
-        cabinetIRPath = value;
-        if (!cabinetIRPath.empty())
-            cabinetBlock.loadImpulseResponse(cabinetIRPath);
+        if (std::strcmp(key, kCabinetIRStateKey) == 0)
+        {
+            cabinetIRPath = value;
+            if (!cabinetIRPath.empty())
+                cabinetBlock.loadImpulseResponse(cabinetIRPath);
+        }
+        else if (std::strcmp(key, kNamModelStateKey) == 0)
+        {
+            // Only adopt the new path on an actual successful load - on
+            // failure, NamBlock keeps whatever was loaded before untouched
+            // (see its own comment), so namModelPath (what getState()
+            // reports for session-saving) needs to keep matching that,
+            // rather than pointing at a file that was never actually
+            // adopted.
+            //
+            // Architecture info and load-failure notification used to be
+            // pushed to the UI from here via Plugin::updateStateValue(),
+            // but that's a no-op on this project's vendored DPF for both
+            // the VST3 backend (its callback is wired to nullptr) and CLAP
+            // (its updateState() is a stub that never notifies the UI) -
+            // only LV2/Carla-native/standalone jack actually delivered it,
+            // so on the two most commonly used formats the sidebar simply
+            // never heard about a successful load, and a failed one never
+            // got a toast either. ChainUI now derives both by reading the
+            // .nam file itself client-side (see readNamArchitecture() in
+            // ChainUI.cpp) off of the same path echoed to it directly by
+            // DPF's file-browser glue - a path that works identically on
+            // every format, since it doesn't depend on this plugin-
+            // initiated push at all.
+            d_stderr2("AmpForge: NAM setState('%s') called, instance %p", value, (void*)this);
+            if (value[0] != '\0' && namBlock.loadModel(value))
+            {
+                d_stderr2("AmpForge: NAM load OK, architecture='%s'", namBlock.getArchitecture().c_str());
+                namModelPath = value;
+            }
+            else if (value[0] != '\0')
+            {
+                d_stderr2("AmpForge: NAM load FAILED, reason='%s'", namBlock.getLastError().c_str());
+            }
+        }
     }
 
     void run(const float** inputs, float** outputs, uint32_t frames) override
     {
         const auto processStart = std::chrono::steady_clock::now();
+
+        bufferSize = static_cast<float>(frames);
 
         if (delaySync > 0.5f || tremoloSync > 0.5f || chorusSync > 0.5f)
             applyTempoSync();
@@ -1106,6 +1255,7 @@ private:
     ampforge::ScreamerBlock screamerBlock;
     ampforge::DistortionBlock distortionBlock;
     ampforge::CabinetBlock cabinetBlock;
+    ampforge::NamBlock namBlock;
     ampforge::AmpBlock ampBlock;
     ampforge::ChorusBlock chorusBlock;
     ampforge::PhaserBlock phaserBlock;
@@ -1130,6 +1280,9 @@ private:
     // to change from call to call - so it's recomputed in run() instead
     // (see kCpuMeterDecayTauSec below).
     float cpuLoad = 0.0f;
+
+    // Buffer Size meter - see kParamBufferSize's comment in ChainParameters.hpp.
+    float bufferSize = 0.0f;
 
     // Tuner - see kParamTunerOn's comment in ChainParameters.hpp.
     bool tunerOn = false;
@@ -1157,26 +1310,45 @@ private:
     // see initState()/getState()/setState() below.
     std::string cabinetIRPath;
 
+    // ampOn defaults true (matching AmpBlock's previous unconditional
+    // always-on behavior exactly) - see kParamAmpOn/Bypass's comment in
+    // ChainParameters.hpp for why a real On/Bypass pair was added here at
+    // all despite that "always-on" history.
+    bool ampOn = true;
     float ampPosition = 5.0f, ampDrive = 0.0f, ampBass = 0.0f, ampMid = 0.0f, ampTreble = 0.0f, ampVolume = 0.0f;
     float ampType = 0.0f; // index into ampforge::kAmpVoicings; 0 = Modern
 
+    bool namOn = false;
+    // Position 7 - right after Cabinet, before Chorus - see
+    // kParamNamPosition's case in initParameter() above for why. (These
+    // C++-side defaults used to be one less than their own parameter's
+    // declared range.def for every position below - chorusPosition = 6.0f
+    // against a declared default of 7.0f, etc. - which the host masked by
+    // always pushing its own declared default at startup; fixed to match
+    // exactly while touching these lines anyway, so this doesn't depend on
+    // that host behavior.)
+    float namPosition = 7.0f, namInputTrim = 0.0f, namOutputLevel = 0.0f, namMix = 1.0f;
+    // The loaded .nam model's path, carried as DPF State rather than a
+    // Parameter - see initState()/getState()/setState() above.
+    std::string namModelPath;
+
     bool chorusOn = false;
-    float chorusPosition = 6.0f, chorusRate = 1.0f, chorusDepth = 5.0f, chorusMix = 0.5f;
+    float chorusPosition = 8.0f, chorusRate = 1.0f, chorusDepth = 5.0f, chorusMix = 0.5f;
     float chorusSync = 0.0f; // index into kSyncDivisions; 0 = Free (off)
 
     bool phaserOn = false;
-    float phaserPosition = 7.0f, phaserRate = 0.5f, phaserDepth = 0.7f, phaserMix = 0.5f;
+    float phaserPosition = 9.0f, phaserRate = 0.5f, phaserDepth = 0.7f, phaserMix = 0.5f;
 
     bool tremoloOn = false;
-    float tremoloPosition = 8.0f, tremoloRate = 5.0f, tremoloDepth = 0.5f;
+    float tremoloPosition = 10.0f, tremoloRate = 5.0f, tremoloDepth = 0.5f;
     float tremoloSync = 0.0f; // index into kSyncDivisions; 0 = Free (off)
 
     bool delayOn = false;
-    float delayPosition = 9.0f, delayTime = 300.0f, delayFeedback = 0.3f, delayMix = 0.3f;
+    float delayPosition = 11.0f, delayTime = 300.0f, delayFeedback = 0.3f, delayMix = 0.3f;
     float delaySync = 0.0f; // index into kSyncDivisions; 0 = Free (off)
 
     bool reverbOn = false;
-    float reverbPosition = 10.0f, reverbRoomSize = 0.5f, reverbDamping = 0.5f, reverbMix = 0.3f;
+    float reverbPosition = 12.0f, reverbRoomSize = 0.5f, reverbDamping = 0.5f, reverbMix = 0.3f;
 
     // Bypass flags - independent from the *On* flags above. See the
     // comment on the Bypass parameters in ChainParameters.hpp.
@@ -1191,6 +1363,8 @@ private:
     bool reverbBypass = false;
     bool distortionBypass = false;
     bool cabinetBypass = false;
+    bool namBypass = false;
+    bool ampBypass = false;
 
     DISTRHO_DECLARE_NON_COPYABLE(ChainPlugin)
 };

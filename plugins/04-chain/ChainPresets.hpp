@@ -27,8 +27,11 @@ START_NAMESPACE_DISTRHO
 // layout for every preset here - only which blocks are on/off and their
 // tone-shaping parameters differ between presets. That default layout is
 // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Distortion(4) -> Amp(5)
-// -> Cabinet(6) -> Chorus(7) -> Phaser(8) -> Tremolo(9) -> Delay(10) ->
-// Reverb(11).
+// -> Cabinet(6) -> NAM(7) -> Chorus(8) -> Phaser(9) -> Tremolo(10) ->
+// Delay(11) -> Reverb(12). NAM sits right after Cabinet - tonally
+// alongside Amp/Cabinet, since it's a capture of a real amp/pedal/cab -
+// rather than at the very end, even though it's off (and so functionally
+// inert) in every preset below.
 //
 // Gain-staging rule these all follow: AmpBlock's Drive feeds a tanh()
 // soft-clip, and Screamer/Distortion are hard clippers ahead of it (see
@@ -80,16 +83,21 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        on,pos,pedal,q  */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   on,pos,drive,tone,level */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
             /* Amp        pos,drive,bass,mid,treble,vol */ 5.0f, 0.0f, 1.0f, -2.0f, 3.0f, 0.5f,
-            /* Chorus     on,pos,rate,depth,mix */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     on,pos,rate,depth,mix */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    on,pos,rate,depth */ 1.0f, 9.0f, 4.0f, 0.25f,
-            /* Delay      on,pos,time,fb,mix */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     on,pos,room,damp,mix */ 1.0f, 11.0f, 0.3f, 0.6f, 0.18f,
+            /* Chorus     on,pos,rate,depth,mix */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     on,pos,rate,depth,mix */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    on,pos,rate,depth */ 1.0f, 10.0f, 4.0f, 0.25f,
+            /* Delay      on,pos,time,fb,mix */ 0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     on,pos,room,damp,mix */ 1.0f, 12.0f, 0.3f, 0.6f, 0.18f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    on,pos,mix,level,bypass */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
             /* Input Gain */ 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
+               their zero defaults (Free/off/off/"Modern") in every preset */
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+            /* Amp on,bypass */                                1.0f, 0.0f,
         }
     },
 
@@ -112,16 +120,21 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 1.0f, 3.0f, 1.5f, 0.6f, 1.0f,
             /* Amp        */ 5.0f, 9.0f, 2.0f, 3.0f, 1.5f, 0.0f,
-            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 1.0f, 11.0f, 0.4f, 0.5f, 0.15f,
+            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
+            /* Delay      */ 0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     */ 1.0f, 12.0f, 0.4f, 0.5f, 0.15f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
             /* Input Gain */ 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
+               their zero defaults (Free/off/off/"Modern") in every preset */
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+            /* Amp on,bypass */                                1.0f, 0.0f,
         }
     },
 
@@ -143,16 +156,21 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 1.0f, 3.0f, 1.3f, 0.6f, 1.5f,
             /* Amp        */ 5.0f, 9.0f, 2.0f, 4.0f, 1.5f, 0.0f,
-            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 10.0f, 350.0f, 0.2f, 0.18f,
-            /* Reverb     */ 1.0f, 11.0f, 0.5f, 0.45f, 0.2f,
+            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
+            /* Delay      */ 1.0f, 11.0f, 350.0f, 0.2f, 0.18f,
+            /* Reverb     */ 1.0f, 12.0f, 0.5f, 0.45f, 0.2f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
             /* Input Gain */ 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
+               their zero defaults (Free/off/off/"Modern") in every preset */
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+            /* Amp on,bypass */                                1.0f, 0.0f,
         }
     },
 
@@ -174,16 +192,21 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 0.0f, 3.0f, 1.2f, 0.4f, 0.0f,
             /* Amp        */ 5.0f, 6.0f, 2.0f, -3.0f, 0.0f, 1.0f,
-            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 0.0f, 11.0f, 0.5f, 0.5f, 0.3f,
+            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
+            /* Delay      */ 0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     */ 0.0f, 12.0f, 0.5f, 0.5f, 0.3f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion on,pos,drive,tone,level,bypass */ 1.0f, 4.0f, 2.5f, 0.3f, -1.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 60.0f,
             /* Input Gain */ 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
+               their zero defaults (Free/off/off/"Modern") in every preset */
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+            /* Amp on,bypass */                                1.0f, 0.0f,
         }
     },
 
@@ -198,16 +221,21 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
             /* Amp        */ 5.0f, 6.0f, 1.5f, -2.0f, 1.5f, 0.0f,
-            /* Chorus     */ 1.0f, 7.0f, 0.4f, 8.0f, 0.6f,
-            /* Phaser     */ 1.0f, 8.0f, 0.2f, 0.5f, 0.3f,
-            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 10.0f, 500.0f, 0.45f, 0.35f,
-            /* Reverb     */ 1.0f, 11.0f, 0.85f, 0.3f, 0.5f,
+            /* Chorus     */ 1.0f, 8.0f, 0.4f, 8.0f, 0.6f,
+            /* Phaser     */ 1.0f, 9.0f, 0.2f, 0.5f, 0.3f,
+            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
+            /* Delay      */ 1.0f, 11.0f, 500.0f, 0.45f, 0.35f,
+            /* Reverb     */ 1.0f, 12.0f, 0.85f, 0.3f, 0.5f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
             /* Input Gain */ 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
+               their zero defaults (Free/off/off/"Modern") in every preset */
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+            /* Amp on,bypass */                                1.0f, 0.0f,
         }
     },
 
@@ -223,16 +251,21 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 1.0f, 2.0f, 0.5f, 4.5f,
             /* Screamer   */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
             /* Amp        */ 5.0f, 1.0f, 0.0f, 1.0f, 3.0f, 0.0f,
-            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 10.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 1.0f, 11.0f, 0.25f, 0.6f, 0.15f,
+            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
+            /* Delay      */ 0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     */ 1.0f, 12.0f, 0.25f, 0.6f, 0.15f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
             /* Input Gain */ 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
+               their zero defaults (Free/off/off/"Modern") in every preset */
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+            /* Amp on,bypass */                                1.0f, 0.0f,
         }
     },
 
@@ -258,16 +291,21 @@ static const PresetDefinition kPresets[kProgramCount] =
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 1.0f, 3.0f, 1.3f, 0.55f, 2.0f,
             /* Amp        */ 5.0f, 9.0f, 3.0f, 3.5f, 1.0f, 0.0f,
-            /* Chorus     */ 0.0f, 7.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 8.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 9.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 10.0f, 380.0f, 0.2f, 0.15f,
-            /* Reverb     */ 1.0f, 11.0f, 0.5f, 0.4f, 0.25f,
+            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
+            /* Delay      */ 1.0f, 11.0f, 380.0f, 0.2f, 0.15f,
+            /* Reverb     */ 1.0f, 12.0f, 0.5f, 0.4f, 0.25f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 45.0f,
             /* Input Gain */ 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
+               their zero defaults (Free/off/off/"Modern") in every preset */
+            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
+            /* Amp on,bypass */                                1.0f, 0.0f,
         }
     },
 };

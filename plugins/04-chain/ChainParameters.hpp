@@ -174,6 +174,48 @@ enum Parameters
     // way kSyncDivisions above is.
     kParamAmpType,
 
+    // NAM - a neural network capture of one specific real amp/pedal/cab,
+    // loaded from a .nam file (core/NamBlock.hpp), reusing NeuralAmpModelerCore
+    // (github.com/sdatkinson/NeuralAmpModelerCore, includes A1 and the newer
+    // A2 architecture). A separate, optional block from the parametric
+    // AmpBlock above, not a replacement for it - the two are independent
+    // tone sources the user can mix and match (see kParamAmpOn/Bypass
+    // below for why Amp not being bypassable used to be a problem for
+    // this pairing specifically). The .nam file
+    // path itself isn't a plain automatable value, so like Cabinet's IR
+    // above it isn't a parameter at all - it travels as DPF plugin State
+    // under kNamModelStateKey below, which is why this block only has
+    // On/Position/InputTrim/OutputLevel/Mix/Bypass here. Appended at the
+    // end like every block above, so existing parameter indices/presets
+    // stay unchanged.
+    kParamNamOn,
+    kParamNamPosition,
+    kParamNamInputTrim,
+    kParamNamOutputLevel,
+    kParamNamMix,
+    kParamNamBypass,
+
+    // Amp On/Bypass - added well after the original Amp parameter block
+    // above, which had no way to disable it at all (every comment calling
+    // it "the always-on parametric AmpBlock" meant it literally: no other
+    // block in this whole enum lacks an On/Bypass pair). That turned out
+    // to matter once NAM existed: AmpBlock's Drive/saturation stage is a
+    // tanh() soft-clip that runs unconditionally, even with Drive/Bass/
+    // Mid/Treble/Volume all left at their neutral 0dB defaults - measured
+    // at ~2% third-harmonic THD for a realistic guitar peak level (~0.5),
+    // growing well past that for a hotter signal. NAM's own model expects
+    // a clean, unprocessed input (it's already a capture of one specific
+    // amp/pedal/cab), so with NAM sitting after Amp at their respective
+    // default positions, that unavoidable pre-saturation quietly feeds
+    // NAM something it was never trained on. On/Bypass here let Amp
+    // actually be taken out of the signal path - same as every other
+    // block already could - instead of just approximating "off" via
+    // Drive=0dB. Both default to on/not-bypassed (see initParameter() in
+    // ChainPlugin.cpp and kBlankPresetValues/kPresets) so every preset or
+    // session saved before these existed still sounds identical.
+    kParamAmpOn,
+    kParamAmpBypass,
+
     // Output-only meters (kParameterIsOutput) - deliberately grouped here,
     // all together at the very end, rather than appended next to the
     // input/feature they each report on (which is where they originally
@@ -205,6 +247,12 @@ enum Parameters
     // (0 = no confident pitch right now), which the UI turns into a note
     // name and cents offset for display.
     kParamTunerFrequency,
+    // Buffer Size - the host's last-seen block size in samples (the
+    // `frames` argument to ChainPlugin::run()), reported back to the UI's
+    // status sidebar the same way as the meters above. Purely informational
+    // - hosts are free to vary this from call to call, so it reflects
+    // "what just happened", not a fixed setting AmpForge controls.
+    kParamBufferSize,
 
     kParamCount
 };
@@ -240,6 +288,24 @@ static const SyncDivision kSyncDivisions[kSyncDivisionCount] =
 // owner) and ChainUI.cpp (which requests/display it), the same way the
 // Parameters enum above is shared, so the two sides can't drift apart.
 static const char* const kCabinetIRStateKey = "cabinet_ir_path";
+
+// The DPF State key that carries the NAM block's loaded .nam model file
+// path - same reasoning and pattern as kCabinetIRStateKey above.
+static const char* const kNamModelStateKey = "nam_model_path";
+
+// NAM model architecture display and load-failure notification used to be
+// two more DPF State keys here (kNamModelInfoStateKey, kNamModelErrorStateKey),
+// pushed from ChainPlugin::setState() via Plugin::updateStateValue(). That
+// push is a no-op on this project's vendored DPF for the VST3 backend (its
+// callback is wired to nullptr) and for CLAP (its updateState() is a stub
+// that never notifies the UI) - only LV2/Carla-native/standalone jack ever
+// delivered it, so on the two most commonly used formats the status
+// sidebar never heard about a successful load, and a failed one never got
+// a toast. Both are now derived entirely client-side in ChainUI.cpp
+// (see readNamArchitecture()) by reading the .nam file directly off of
+// the path in kNamModelStateKey below - a path ChainUI always has
+// correctly, on every format, since DPF's file-browser glue echoes it to
+// the UI directly rather than through this plugin-initiated push.
 
 // The DPF State key used to open a native "pick a file" dialog for
 // importing a preset (see ChainUI.cpp's importPresetsFromFile() and

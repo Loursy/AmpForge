@@ -29,11 +29,21 @@ same [Releases page](https://github.com/Loursy/AmpForge/releases/latest).)
 
 ## Features
 
-- **12 internal modules**, freely reorderable at runtime: Noise Gate,
+- **13 internal modules**, freely reorderable at runtime: Noise Gate,
   Compressor, Wah, Screamer (overdrive), Distortion (a harder,
   asymmetric-clipping second gain stage), Amp (always present),
-  Cabinet (convolves with a loaded speaker-cab impulse response),
-  Chorus, Phaser, Tremolo, Delay, Reverb.
+  Cabinet (convolves with a loaded speaker-cab impulse response), NAM
+  (loads a [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore)
+  `.nam` capture of a real amp/pedal/cab), Chorus, Phaser, Tremolo,
+  Delay, Reverb.
+- **Neural Amp Modeler (NAM) support** — load a `.nam` capture file
+  (both the original and newer A2 architectures) into its own block,
+  independent from the modeled Amp/Cabinet chain — mix, input trim,
+  and output trim knobs let you blend it in, and the status sidebar
+  shows the loaded capture's filename and architecture (WaveNet, LSTM,
+  ...). NAM inference is CPU-heavier than the rest of the chain
+  combined, especially with larger WaveNet captures — expect a real
+  jump in CPU usage once a model is loaded.
 - **4 Amp Type voicings** (Modern, Vintage, Crunch, Hi-Gain) — distinct
   EQ centers, headroom, and clip character per type; "Modern" is the
   default and matches the Amp block's original fixed behavior exactly.
@@ -83,9 +93,16 @@ only takes a few minutes.
 **Debian / Ubuntu:**
 
 ```bash
-sudo apt install build-essential cmake ninja-build git \
+sudo apt install build-essential cmake ninja-build git pkg-config \
     libx11-dev libxext-dev libxcursor-dev libxrandr-dev libgl1-mesa-dev
 ```
+
+Needs **CMake 3.17+** (for `FetchContent`'s `GIT_SUBMODULES_RECURSE`) -
+Ubuntu 22.04/Debian 12 and newer already have this in `apt`. Older releases
+(Ubuntu 20.04's `cmake` is 3.16.3, too old) need a newer CMake from
+elsewhere (e.g. [Kitware's apt repo](https://apt.kitware.com/)) - or just
+use the [Docker build](#building-a-portable-release-build-docker) below,
+which sidesteps this and every other toolchain-version question at once.
 
 **Arch / CachyOS / Manjaro:**
 
@@ -117,6 +134,80 @@ This builds four plugin folders (`01-gain`, `02-amp`, `03-screamer`
 are early scaffolding kept for reference; **`04-chain` is AmpForge
 itself**, the actual product). All the output ends up under
 `build/bin/`.
+
+#### Building a portable release build (Docker)
+
+A native build like the one above links against whatever glibc your
+own distro ships. On a rolling-release distro that can be *too new*:
+a plugin built against glibc 2.43, for example, fails to load in an
+older sandboxed host - such as Bitwig's flatpak build on a
+just-released Fedora - with an error like:
+
+```
+Failed to load CLAP plug-in ... version `GLIBC_2.43' not found
+```
+
+To avoid that, build inside `installer/linux/Dockerfile`'s Ubuntu
+22.04 (glibc 2.35) environment instead, which covers essentially every
+mainstream Linux distro and flatpak/snap runtime from the last several
+years. That specific baseline isn't arbitrary - pushing it back further to
+Debian 11 (glibc 2.31, still a meaningfully common target) was tried and
+hits a real wall: DPF's own (unused - AmpForge's UI is OpenGL/DGL, not a
+WebView) `WebViewImpl.cpp` always compiles in, and its `shm_open`/
+`shm_unlink`/`pthread_create`/`pthread_join` calls link cleanly on glibc
+2.34+ (those merged into `libc` itself around then) but fail with
+`undefined reference` on anything older without patching DPF's own build
+to add `-lrt` - out of scope here. Ubuntu 22.04 is the oldest base that
+builds clean without touching DPF at all.
+
+```bash
+installer/linux/docker-build.sh
+```
+
+This mounts the repo into a container and runs the same CMake/Ninja
+build as above, landing the result in `build-docker/bin/` instead of
+`build/bin/` (so it never collides with a native build you already
+have). `installer/linux/package.sh` and `install.sh` both work against
+it the same way, just point them at it with `BUILD_DIR`:
+
+```bash
+BUILD_DIR=build-docker installer/linux/package.sh
+```
+
+This is also what CI (`.github/workflows/linux-build.yml`) runs on
+every push, so a release built this way is reproducible on your own
+machine too. Requires only [Docker](https://docs.docker.com/engine/install/)
+itself - no other prerequisites from step 1.
+
+**Which systems the Docker build actually loads on:** a Docker-built
+`.clap`/`.vst3`/`.lv2` needs at most `GLIBC_2.34` and `GLIBCXX_3.4.29`.
+Check your own system against that with:
+
+```bash
+ldd --version   # glibc version, first line
+strings /usr/lib/x86_64-linux-gnu/libstdc++.so.6 | grep GLIBCXX | sort -V | tail -1
+```
+
+(that second path varies by distro - e.g. `/usr/lib64/libstdc++.so.6` on
+Fedora). Verified for real below, not just compared version numbers -
+actually resolved the built `.clap`'s dynamic symbols with `ld.so --list`
+inside each distro's own container image:
+
+| System | Status |
+| --- | --- |
+| Ubuntu 22.04 LTS and newer (24.04, ...) | ✅ Works |
+| Debian 12 (bookworm) and newer | ✅ Works |
+| Fedora (recent releases, native or flatpak-sandboxed hosts like Bitwig on a current runtime) | ✅ Works - this is the exact bug report that started this section |
+| Arch / CachyOS / Manjaro (rolling) | ✅ Works (glibc is always current there) |
+| Ubuntu 20.04 (focal) | ❌ Too old - `GLIBC_2.32/2.33/2.34 not found` |
+| Debian 11 (bullseye) and older | ❌ Too old - same `GLIBC`/`GLIBCXX` errors, and can't even be used as the *build* environment either (see the DPF `-lrt` wall above) |
+
+A native build (the non-Docker path above) inherits whatever's newer or
+older about *your own* system's glibc instead of this table - it can be
+strictly more restrictive (a rolling-release host, the original problem
+this section exists for) or, in principle, less (building directly on an
+even-older-than-Ubuntu-22.04 system that nonetheless has a new enough
+compiler for everything else) than what the Docker build produces.
 
 ### 3. Install
 
@@ -212,13 +303,38 @@ plugin state, not a parameter, but it's still real host-persisted
 state), so it survives a project reload as long as the file stays at
 the same path on disk.
 
+### Loading a NAM capture
+
+The NAM block runs a [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore)
+`.nam` file — a neural network trained to reproduce one specific real
+amp, pedal, or cabinet, rather than a hand-tuned emulation like the
+Amp block. It's a separate, optional tone source you can mix in
+alongside (or instead of) the modeled Amp/Cabinet chain, not something
+you have to choose between.
+
+AmpForge doesn't bundle any captures (most are shared under their own
+terms by whoever trained them) — bring your own from
+[ToneHunt](https://tonehunt.org) or [Tone3000](https://www.tone3000.com),
+or train your own with the [official NAM trainer](https://github.com/sdatkinson/neural-amp-modeler).
+
+Add the NAM pedal to your board, click its **Load NAM Model...**
+button, and pick a `.nam` file. Like the Cabinet IR path above, the
+loaded model's file path is saved with your DAW session/project and
+survives a reload as long as the file stays at the same path on disk.
+The status sidebar confirms what's loaded — filename and architecture
+(WaveNet, LSTM, the A2 "SlimmableContainer" wrapper, ...).
+
 ## Project status
 
-The DSP engine (all 12 modules, the reorderable chain, factory
+The DSP engine (all 13 modules, the reorderable chain, factory
 presets) and the pedalboard UI are both functional and usable today.
 Known gaps, tracked for future work:
 
-- No neural amp modeler (NAM) capture loading yet.
+- The NAM block runs inference one audio sample at a time rather than
+  batched per-block (see `core/NamBlock.hpp`'s comment on why), which
+  gives up some of NAM's own internal batching efficiency - fine for a
+  single real-time instance, but a future optimization target if CPU
+  cost ever becomes a problem.
 - The Cabinet block's convolution is a straightforward direct
   time-domain implementation, not an FFT-partitioned one — plenty fast
   enough for a single instance at the IR lengths a speaker cab actually
@@ -229,9 +345,12 @@ Known gaps, tracked for future work:
   those for Windows isn't set up yet, so there's no Windows standalone
   `.exe` for now (VST3/CLAP/LV2 inside a DAW cover the overwhelming
   majority of Windows use anyway).
-- No CI pipeline yet - every release (Linux tarball and Windows
-  installer alike) is still built and uploaded locally by hand, not
-  automated on every push/tag.
+- CI ([GitHub Actions](.github/workflows/linux-build.yml)) now builds
+  and packages the Linux tarball on every push/PR/tag, using the same
+  portable Docker build described above - but it only uploads a build
+  artifact, it doesn't publish a GitHub Release automatically yet, and
+  the Windows installer isn't built by CI at all. Both releases are
+  still published by hand for now.
 
 ## Contributing
 

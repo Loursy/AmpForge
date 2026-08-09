@@ -14,7 +14,9 @@ notice for the compiled binaries (source builds already get it via
 DPF's own fetched `LICENSE` files).
 
 None of this affects AmpForge's own license: all of the following are
-GPL-compatible permissive licenses (ISC, zlib, MIT), so they only
+GPL-compatible licenses (ISC, zlib, MIT, and - for Eigen below -
+MPL-2.0, a weak/file-level copyleft that the FSF and the Mozilla
+Foundation both document as GPLv2-or-later compatible), so they only
 require attribution, not that AmpForge's own code be released under
 them.
 
@@ -109,6 +111,82 @@ Full text: `LICENSE-DejaVuSans.ttf.txt` in DPF's own `dgl/src/resources/`
 full text is long and mostly boilerplate; nothing in it is more
 restrictive than "keep the notice, don't reuse the Bitstream Vera/Arev
 names for a modified font."
+
+## NeuralAmpModelerCore
+
+The neural-network inference library the NAM block (`core/NamBlock.hpp`)
+loads `.nam` capture files (both the original architecture and the
+newer A2 architecture) into and runs - fetched at build time the same
+way as DPF (CMake `FetchContent`, pinned commit, not vendored), and
+statically compiled into `nam_core` (see the root `CMakeLists.txt`),
+which every AmpForge binary links.
+
+Copyright (c) 2023 Steven Atkinson
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
+
+## Eigen
+
+The linear-algebra library NeuralAmpModelerCore's neural network
+layers are built on (fetched as NeuralAmpModelerCore's own git
+submodule, `Dependencies/eigen`, pulled in by the same `FetchContent`
+call above); header-only, so it's compiled directly into `nam_core`
+rather than linked as a separate library.
+
+Licensed under the Mozilla Public License 2.0 (MPL-2.0) - a
+file-level/weak copyleft: modifications to Eigen's *own* source files
+would need to stay MPL-2.0 and have their source made available, but
+it explicitly does not extend that requirement to code (like
+AmpForge's) that merely uses Eigen as a library, and the FSF lists
+MPL-2.0 as GPLv2-or-later compatible. AmpForge doesn't modify Eigen's
+source at all - it's used unmodified via `FetchContent`.
+
+Full text: `Dependencies/eigen/LICENSE` (fetched at build time, not
+vendored here) or <https://www.mozilla.org/MPL/2.0/>.
+
+## nlohmann/json
+
+The JSON parser NeuralAmpModelerCore uses to read `.nam` files'
+metadata/weights (vendored by NeuralAmpModelerCore itself as a single
+header, `Dependencies/nlohmann/json.hpp`, not a git submodule - it
+comes along automatically with the `FetchContent` call above).
+
+SPDX-FileCopyrightText: 2013-2025 Niels Lohmann <https://nlohmann.me>
+- MIT License
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy
+> of this software and associated documentation files (the "Software"), to deal
+> in the Software without restriction, including without limitation the rights
+> to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+> copies of the Software, and to permit persons to whom the Software is
+> furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all
+> copies or substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+> IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+> FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+> AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+> LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+> OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+> SOFTWARE.
 
 ## CLAP headers
 
