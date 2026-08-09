@@ -153,6 +153,16 @@ itself**, the actual product). All the output ends up under
 
 #### Building a portable release build (Docker)
 
+Just want the plugin? You don't need this section - the [prebuilt
+tarball](#download) is already built this exact way, so it works
+out of the box, flatpak/snap-sandboxed hosts included, with zero
+build steps on your end. This section is for building *from source*
+with that same portability guarantee - useful if you're testing an
+unreleased commit in a sandboxed host, don't want to fight your own
+system's toolchain versions (see step 1 above), or are the one
+cutting a release (though even that's automated now - see [Project
+status](#project-status)).
+
 A native build like the one above links against whatever glibc your
 own distro ships. On a rolling-release distro that can be *too new*:
 a plugin built against glibc 2.43, for example, fails to load in an
@@ -183,17 +193,21 @@ installer/linux/docker-build.sh
 This mounts the repo into a container and runs the same CMake/Ninja
 build as above, landing the result in `build-docker/bin/` instead of
 `build/bin/` (so it never collides with a native build you already
-have). `installer/linux/package.sh` and `install.sh` both work against
-it the same way, just point them at it with `BUILD_DIR`:
+have). `installer/linux/package.sh` and `installer/linux/install.sh`
+(step 3 below) both work against it the same way, just point them at
+it with `BUILD_DIR`:
 
 ```bash
-BUILD_DIR=build-docker installer/linux/package.sh
+BUILD_DIR=build-docker installer/linux/package.sh   # -> a release tarball
+BUILD_DIR=build-docker installer/linux/install.sh   # -> install it straight away, no tarball
 ```
 
-This is also what CI (`.github/workflows/linux-build.yml`) runs on
-every push, so a release built this way is reproducible on your own
-machine too. Requires only [Docker](https://docs.docker.com/engine/install/)
-itself - no other prerequisites from step 1.
+This is also exactly what CI (`.github/workflows/linux-build.yml`)
+runs on every push - and on a `v*` tag, automatically publishes the
+result as the official GitHub Release, so this is what actually
+produces the [prebuilt tarball](#download) mentioned above. Requires
+only [Docker](https://docs.docker.com/engine/install/) itself - no
+other prerequisites from step 1.
 
 **Which systems the Docker build actually loads on:** a Docker-built
 `.clap`/`.vst3`/`.lv2` needs at most `GLIBC_2.34` and `GLIBCXX_3.4.29`.
@@ -230,8 +244,14 @@ compiler for everything else) than what the Docker build produces.
 Built it yourself and just want it installed, without copying each
 format by hand below? `installer/linux/install.sh` does exactly the
 same copies in one step - run it straight from the repo root
-(`installer/linux/install.sh`) once `build/bin/` exists, or
+(`installer/linux/install.sh`) once `build/bin/` exists (used the
+[Docker build](#building-a-portable-release-build-docker) above
+instead? `BUILD_DIR=build-docker installer/linux/install.sh`), or
 `installer/linux/install.sh --uninstall` to remove it again.
+
+The manual per-format copies below all assume a native build
+(`build/bin/...`) - swap in `build-docker/bin/...` if that's what you
+built.
 
 **LV2** (for Carla, Ardour, Qtractor, and most Linux LV2 hosts):
 

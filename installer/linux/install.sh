@@ -8,7 +8,10 @@
 # paths themselves. Works from two layouts: inside an extracted release
 # tarball (a bin/ dir sits right next to this script), or run directly
 # from the repo root after building from source (falls back to
-# build/bin/).
+# build/bin/ - or BUILD_DIR/bin/ if BUILD_DIR is set, the same override
+# installer/linux/package.sh takes, for installing straight from a
+# installer/linux/docker-build.sh build without packaging a tarball
+# first: BUILD_DIR=build-docker installer/linux/install.sh).
 #
 # No sudo/root needed - matches how Linux plugin hosts (Reaper, Carla,
 # Ardour, ...) already scan a user's home directory by default.
@@ -18,7 +21,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [[ -d "$SCRIPT_DIR/bin" ]]; then
     BIN_DIR="$SCRIPT_DIR/bin"          # extracted release tarball
 else
-    BIN_DIR="$SCRIPT_DIR/../../build/bin"  # repo root, built from source
+    BIN_DIR="$SCRIPT_DIR/../../${BUILD_DIR:-build}/bin"  # repo root, built from source
 fi
 
 if [[ "${1:-}" == "--uninstall" ]]; then
