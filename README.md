@@ -13,6 +13,10 @@ users - see [Download](#download) below.
 Linux has never really had a good, free, actively-developed answer to
 Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
 
+![AmpForge screenshot](docs/screenshot.png)
+
+Video demo: [youtube.com/watch?v=gz9fyAHsE6M](https://www.youtube.com/watch?v=gz9fyAHsE6M)
+
 ## Download
 
 Grab the latest tarball from the [Releases
