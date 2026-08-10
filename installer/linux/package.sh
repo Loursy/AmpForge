@@ -25,7 +25,7 @@ set -euo pipefail
 # tarball's version always matches its tag with no hand-editing here
 # required, and this hardcoded fallback only actually matters for an
 # untagged local/CI build.
-VERSION="${VERSION:-0.2.0}"
+VERSION="${VERSION:-0.2.1}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="$REPO_ROOT/${BUILD_DIR:-build}"

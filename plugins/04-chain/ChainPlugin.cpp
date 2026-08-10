@@ -1101,11 +1101,19 @@ protected:
     // (NamBlock::loadModel() follows the identical double-buffer pattern).
     void setState(const char* key, const char* value) override
     {
+        if (suppressingStatePush)
+            return;
+
         if (std::strcmp(key, kCabinetIRStateKey) == 0)
         {
             cabinetIRPath = value;
             if (!cabinetIRPath.empty())
+            {
                 cabinetBlock.loadImpulseResponse(cabinetIRPath);
+                suppressingStatePush = true;
+                updateStateValue(key, value);
+                suppressingStatePush = false;
+            }
         }
         else if (std::strcmp(key, kNamModelStateKey) == 0)
         {
@@ -1116,25 +1124,38 @@ protected:
             // rather than pointing at a file that was never actually
             // adopted.
             //
-            // Architecture info and load-failure notification used to be
-            // pushed to the UI from here via Plugin::updateStateValue(),
-            // but that's a no-op on this project's vendored DPF for both
-            // the VST3 backend (its callback is wired to nullptr) and CLAP
-            // (its updateState() is a stub that never notifies the UI) -
-            // only LV2/Carla-native/standalone jack actually delivered it,
-            // so on the two most commonly used formats the sidebar simply
-            // never heard about a successful load, and a failed one never
-            // got a toast either. ChainUI now derives both by reading the
-            // .nam file itself client-side (see readNamArchitecture() in
-            // ChainUI.cpp) off of the same path echoed to it directly by
-            // DPF's file-browser glue - a path that works identically on
-            // every format, since it doesn't depend on this plugin-
-            // initiated push at all.
+            // Architecture info is derived by ChainUI reading the .nam file
+            // itself client-side (see readNamArchitecture() in ChainUI.cpp)
+            // rather than us parsing and pushing it - but ChainUI still
+            // needs to hear that kNamModelStateKey *changed* at all in order
+            // to trigger that read, and DPF's own file-browser glue only
+            // delivers that "for free" when the pick went through DPF's
+            // in-process fallback dialog. When a host instead handles
+            // UI::requestStateFile() with its own native picker (VST3/CLAP
+            // have no such path in this project's vendored DPF, but LV2
+            // hosts like Carla do via the request_value extension), the
+            // chosen path reaches setState() here via the host's own
+            // patch:Set relay - DPF's LV2 backend has that message handling
+            // path (lv2_work()) but deliberately leaves the matching "tell
+            // the UI" step commented out (FIXME: "host should be
+            // responsible for updating UI side, not us") - and evidently
+            // not every host actually does that job, so the sidebar was
+            // left permanently stuck on "No model loaded" despite the DSP
+            // having loaded the model correctly (confirmed via Carla/LV2:
+            // audio changed, sidebar didn't). updateStateValue() is the
+            // supported way to push a value to the UI ourselves regardless
+            // of which path got us here - it's a safe no-op on VST3/CLAP
+            // (see UI::stateChanged()'s comment for why those two still
+            // need the client-side re-read instead), but on LV2/standalone
+            // it's exactly the missing notification.
             d_stderr2("AmpForge: NAM setState('%s') called, instance %p", value, (void*)this);
             if (value[0] != '\0' && namBlock.loadModel(value))
             {
                 d_stderr2("AmpForge: NAM load OK, architecture='%s'", namBlock.getArchitecture().c_str());
                 namModelPath = value;
+                suppressingStatePush = true;
+                updateStateValue(key, value);
+                suppressingStatePush = false;
             }
             else if (value[0] != '\0')
             {
@@ -1331,6 +1352,13 @@ private:
     // The loaded .nam model's path, carried as DPF State rather than a
     // Parameter - see initState()/getState()/setState() above.
     std::string namModelPath;
+    // Guards setState()'s updateStateValue() calls against DPF's own
+    // re-entrancy: Plugin::updateStateValue() is documented to call
+    // setState() again itself before notifying the UI (see its doc comment
+    // in DistrhoPlugin.hpp), so calling it from inside setState() would
+    // otherwise recurse forever. See setState()'s comment for why we call
+    // it there at all.
+    bool suppressingStatePush = false;
 
     bool chorusOn = false;
     float chorusPosition = 8.0f, chorusRate = 1.0f, chorusDepth = 5.0f, chorusMix = 0.5f;
