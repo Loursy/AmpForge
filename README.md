@@ -1,6 +1,7 @@
 # AmpForge
 
-**A free, open-source guitar amp simulator plugin for Linux.**
+**A free, open-source guitar amp simulator plugin for Linux — with a
+couple of vocal effects built in too.**
 
 AmpForge is a single plugin — not a chain of separate plugins bolted
 together in a DAW — that hosts a full, reorderable pedalboard-and-amp
@@ -29,20 +30,29 @@ format individually? See [Building from source](#building-from-source)
 below.
 
 (Windows users: an installer - `AmpForge-Setup.exe` - is on the
-[Releases page](https://github.com/Loursy/AmpForge/releases) too,
-though it isn't rebuilt for every release yet - see [Project
-status](#project-status) - so grab it from the newest release that
-actually has one attached if the latest doesn't.)
+[Releases page](https://github.com/Loursy/AmpForge/releases) too.)
 
 ## Features
 
-- **13 internal modules**, freely reorderable at runtime: Noise Gate,
+- **15 internal modules**, freely reorderable at runtime: Noise Gate,
   Compressor, Wah, Screamer (overdrive), Distortion (a harder,
   asymmetric-clipping second gain stage), Amp (always present),
   Cabinet (convolves with a loaded speaker-cab impulse response), NAM
   (loads a [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore)
   `.nam` capture of a real amp/pedal/cab), Chorus, Phaser, Tremolo,
-  Delay, Reverb.
+  Delay, Reverb, Autotune, De-esser. See [The
+  pedals](#the-pedals) below for what every knob on every one of them
+  actually does.
+- **Vocal effects** — Autotune and De-esser sit in the same reorderable
+  chain as everything else, so a "vocal preset" is just Amp/Cabinet/NAM
+  turned off and these (plus Delay/Reverb, already generic enough to
+  double as vocal effects) turned on. Autotune is a classic "hard-tune"
+  pitch corrector — snaps your voice to the nearest note in a chosen
+  Key/Scale, with a Retune Speed knob going from a gentle glide to the
+  instant, robotic T-Pain-style snap. De-esser tames harsh "s"/"sh"
+  sibilance without dulling the rest of the voice, using a split-band
+  technique that only reduces the sibilant frequency band, not the
+  whole signal.
 - **Neural Amp Modeler (NAM) support** — load a `.nam` capture file
   (both the original and newer A2 architectures) into its own block,
   independent from the modeled Amp/Cabinet chain — mix, input trim,
@@ -309,6 +319,90 @@ every parameter value you've dialed in does (that's standard host
 automation state, saved and restored with your project like any other
 plugin).
 
+### The pedals
+
+What each pedal does and what its knobs actually change, in plain terms
+(the same order they sit in on the default board):
+
+- **Noise Gate** — quiets the signal between notes so hiss/hum doesn't
+  ride along with high-gain distortion. **Thresh**: how quiet the signal
+  has to get before the gate starts closing. **Attack**: how fast it
+  re-opens once you play again. **Release**: how fast it closes after you
+  stop. **Range**: how far down it pulls the signal instead of slamming
+  it to total silence.
+- **Compressor** — evens out volume, taming loud peaks and lifting quiet
+  parts closer together. **Thresh**: the level above which it starts
+  reducing gain. **Ratio**: how hard it squashes anything over that
+  (4:1 means 4dB over becomes 1dB over). **Attack**/**Release**: how fast
+  it reacts to a peak, and how fast it lets go afterward. **Makeup**:
+  turns the overall (now quieter) output back up.
+- **Wah** — a swept filter that mimics a real wah pedal's rocking
+  treadle. **Pedal**: heel-down (0) to toe-down (1) — automate this
+  from your DAW to actually "play" the wah. **Q**: how narrow/sharp the
+  sweeping peak sounds.
+- **Screamer** — a Tube-Screamer-style overdrive: smooth, warm grit.
+  **Drive**: how hard it pushes into clipping. **Tone**: rolls off highs
+  as you turn it down. **Level**: final output volume.
+- **Distortion** — a harder, buzzier gain stage than Screamer (asymmetric
+  clipping, like a Boss DS-1/ProCo Rat style circuit). Same three knobs
+  as Screamer (**Drive**/**Tone**/**Level**), just on a much hotter Drive
+  range meant to get considerably dirtier.
+- **Amp** — the core amp simulation; always present (though it can be
+  turned off/bypassed like anything else). **Type**: picks a voicing
+  (Modern/Vintage/Crunch/Hi-Gain — different EQ character and headroom).
+  **Drive**: pushes into the amp's soft-clip saturation. **Bass**/**Mid**/
+  **Treble**: the tone stack. **Volume**: final output level.
+- **Cabinet** — convolves the signal with a loaded speaker cabinet
+  impulse response (a WAV recording of how a real cab+mic responds),
+  which is what makes a driven amp sound like it's coming out of a real
+  speaker instead of sounding thin/synthetic. Needs its own IR file
+  loaded first — see [Loading a cabinet impulse
+  response](#loading-a-cabinet-impulse-response) below. **Mix**: dry/wet
+  blend. **Level**: output trim.
+- **NAM** — runs the signal through a loaded [Neural Amp
+  Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore) `.nam`
+  capture of one specific real amp/pedal/cab, as an independent tone
+  source alongside (not instead of) the Amp/Cabinet above. Needs its own
+  model file loaded first — see [Loading a NAM
+  capture](#loading-a-nam-capture) below. **In**: input trim before the
+  model (it expects a clean, unprocessed signal). **Mix**: dry/wet blend.
+  **Out**: output trim.
+- **Chorus** — thickens the sound with a constantly-wobbling delayed
+  copy mixed in, for a "multiple instruments at once" effect. **Rate**:
+  how fast the wobble moves. **Depth**: how far it wobbles. **Mix**:
+  dry/wet blend. **Sync**: lock Rate to the host's tempo instead of a
+  free-running Hz value.
+- **Phaser** — a sweeping "whoosh" from moving notches in the frequency
+  response, different in character from Chorus. **Rate**: sweep speed.
+  **Depth**: how far the sweep travels. **Mix**: dry/wet blend.
+- **Tremolo** — rhythmically pulses the volume up and down (the classic
+  surf/indie "pulsing" sound). **Rate**: pulse speed. **Depth**: how
+  strong the pulse is. **Sync**: lock Rate to the host's tempo.
+- **Delay** — a classic echo. **Time**: gap between repeats. **Feedback**:
+  how many repeats you hear before they die out. **Mix**: dry/wet blend.
+  **Sync**: lock Time to a note division of the host's tempo instead of a
+  free-running ms value.
+- **Reverb** — simulates the sound of a space (room, hall, plate).
+  **Room**: how big/long the simulated space feels. **Damping**: how
+  quickly the high frequencies die out in the tail (more damping =
+  darker, more "absorbed" sound). **Mix**: dry/wet blend.
+- **Autotune** — vocal pitch correction; see [Vocal
+  effects](#features) above for the concept. **Key**/**Scale**: which
+  notes count as "in tune" to snap to (Scale = Chromatic/Major/Minor).
+  **Speed**: how fast it snaps to the corrected pitch — low is a gentle
+  glide, high is the instant, robotic T-Pain-style snap.
+- **De-esser** — tames harsh "s"/"sh" sibilance in a voice without
+  dulling the rest of it. **Freq**: where the sibilant band starts
+  (typically 4–9kHz depending on the voice — sweep it until it lands on
+  the harsh part of an "s"). **Thresh**: how loud that band has to get
+  before it kicks in. **Reduction**: the maximum amount it's allowed to
+  turn that band down by.
+
+Every pedal also has an **On/off** toggle (adds/removes it from the
+board) and a **Bypass** footswitch (keeps it on the board, visible, but
+temporarily out of the signal path) — the same distinction a real
+pedalboard has between unplugging a pedal and just stepping on it.
+
 ### Exporting and importing presets
 
 The preset dropdown's **Export** button writes the currently-loaded
@@ -366,7 +460,7 @@ The status sidebar confirms what's loaded — filename and architecture
 
 ## Project status
 
-The DSP engine (all 13 modules, the reorderable chain, factory
+The DSP engine (all 15 modules, the reorderable chain, factory
 presets) and the pedalboard UI are both functional and usable today.
 Known gaps, tracked for future work:
 
@@ -390,9 +484,13 @@ Known gaps, tracked for future work:
   portable Docker build described above, and on a `v*` tag push
   publishes it as a GitHub Release automatically - pushing a tag is
   the whole Linux release process now, no local Docker run or manual
-  upload needed. The Windows installer isn't built by CI at all yet
-  though (no Windows cross-build image exists), so it's still built
-  and published by hand, on whatever cadence actually needs a new one.
+  upload needed. A separate workflow
+  ([`windows-build.yml`](.github/workflows/windows-build.yml))
+  cross-compiles the Windows installer the same way
+  (`installer/windows/build.sh`) and attaches
+  `AmpForge-<version>-Setup.exe` to that same release, so pushing a tag
+  now publishes both platforms with no manual packaging step on either
+  side.
 
 ## Contributing
 

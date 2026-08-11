@@ -36,6 +36,8 @@
 #include "PhaserBlock.hpp"
 #include "TremoloBlock.hpp"
 #include "WahBlock.hpp"
+#include "AutotuneBlock.hpp"
+#include "DeEsserBlock.hpp"
 #include "EffectChain.hpp"
 #include "PitchDetector.hpp"
 #include <cmath>
@@ -119,12 +121,23 @@ public:
         reverbBlock.setDamping(0.5f);
         reverbBlock.setMix(0.3f);
 
+        autotuneBlock.setKey(0);
+        autotuneBlock.setScale(0);
+        autotuneBlock.setRetuneSpeed(0.5f);
+
+        deEsserBlock.setFrequency(6000.0f);
+        deEsserBlock.setThresholdDB(-30.0f);
+        deEsserBlock.setReductionDB(12.0f);
+
         // Default pedalboard order:
         // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Distortion(4) ->
         // Amp(5) -> Cabinet(6) -> NAM(7) -> Chorus(8) -> Phaser(9) ->
-        // Tremolo(10) -> Delay(11) -> Reverb(12). NAM sits right after
-        // Cabinet - see kParamNamPosition's case in initParameter() below
-        // for why.
+        // Tremolo(10) -> Delay(11) -> Reverb(12) -> Autotune(13) ->
+        // De-esser(14). NAM sits right after Cabinet - see
+        // kParamNamPosition's case in initParameter() below for why.
+        // Autotune/De-esser are last since they're the two blocks here
+        // that aren't guitar-oriented at all - see their comments in
+        // ChainParameters.hpp.
         chain.addBlock(&gateBlock, 0);
         chain.addBlock(&compBlock, 1);
         chain.addBlock(&wahBlock, 2);
@@ -138,6 +151,8 @@ public:
         chain.addBlock(&tremoloBlock, 10);
         chain.addBlock(&delayBlock, 11);
         chain.addBlock(&reverbBlock, 12);
+        chain.addBlock(&autotuneBlock, 13);
+        chain.addBlock(&deEsserBlock, 14);
         chain.rebuildOrder();
 
         // Amp starts on and un-bypassed (ampOn=true, ampBypass=false above),
@@ -159,6 +174,8 @@ public:
         chain.setEnabled(&tremoloBlock, false);
         chain.setEnabled(&delayBlock, false);
         chain.setEnabled(&reverbBlock, false);
+        chain.setEnabled(&autotuneBlock, false);
+        chain.setEnabled(&deEsserBlock, false);
 
         // Defensive initialization: some hosts (notably the JACK/PipeWire
         // standalone target) can start processing audio before they call
@@ -181,6 +198,8 @@ public:
         tremoloBlock.setSampleRate(initialSampleRate);
         delayBlock.setSampleRate(initialSampleRate);
         reverbBlock.setSampleRate(initialSampleRate);
+        autotuneBlock.setSampleRate(initialSampleRate);
+        deEsserBlock.setSampleRate(initialSampleRate);
         tunerDetector.setSampleRate(initialSampleRate);
     }
 
@@ -207,7 +226,7 @@ protected:
         case kParamGatePosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Gate Position"; parameter.symbol = "gate_position";
-            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamGateThreshold:
             parameter.name = "Gate Threshold"; parameter.symbol = "gate_threshold"; parameter.unit = "dB";
@@ -247,7 +266,7 @@ protected:
         case kParamCompPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Compressor Position"; parameter.symbol = "comp_position";
-            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamCompThreshold:
             parameter.name = "Compressor Threshold"; parameter.symbol = "comp_threshold"; parameter.unit = "dB";
@@ -279,7 +298,7 @@ protected:
         case kParamWahPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Wah Chain Position"; parameter.symbol = "wah_chain_position";
-            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamWahPedal:
             parameter.name = "Wah Pedal"; parameter.symbol = "wah_pedal";
@@ -299,7 +318,7 @@ protected:
         case kParamScreamerPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Screamer Position"; parameter.symbol = "screamer_position";
-            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamScreamerDrive:
             parameter.name = "Screamer Drive"; parameter.symbol = "screamer_drive"; parameter.unit = "x";
@@ -324,7 +343,7 @@ protected:
         case kParamDistortionPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Distortion Position"; parameter.symbol = "distortion_position";
-            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamDistortionDrive:
             parameter.name = "Distortion Drive"; parameter.symbol = "distortion_drive"; parameter.unit = "x";
@@ -348,7 +367,7 @@ protected:
         case kParamAmpPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Amp Position"; parameter.symbol = "amp_position";
-            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamAmpDrive:
             parameter.name = "Amp Drive"; parameter.symbol = "amp_drive"; parameter.unit = "dB";
@@ -381,6 +400,66 @@ protected:
             parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
             break;
 
+        // --- Autotune (core/AutotuneBlock.hpp) ---
+        case kParamAutotuneOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Autotune On"; parameter.symbol = "autotune_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamAutotunePosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Autotune Position"; parameter.symbol = "autotune_position";
+            parameter.ranges.def = 13.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            break;
+        case kParamAutotuneKey:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Autotune Key"; parameter.symbol = "autotune_key";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 11.0f;
+            break;
+        case kParamAutotuneScale:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Autotune Scale"; parameter.symbol = "autotune_scale";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = float(ampforge::kScaleCount - 1);
+            break;
+        case kParamAutotuneSpeed:
+            parameter.name = "Autotune Speed"; parameter.symbol = "autotune_speed";
+            parameter.ranges.def = 0.5f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamAutotuneBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Autotune Bypass"; parameter.symbol = "autotune_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
+        // --- De-esser (core/DeEsserBlock.hpp) ---
+        case kParamDeEsserOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "De-esser On"; parameter.symbol = "deesser_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamDeEsserPosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "De-esser Position"; parameter.symbol = "deesser_position";
+            parameter.ranges.def = 14.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            break;
+        case kParamDeEsserFrequency:
+            parameter.name = "De-esser Frequency"; parameter.symbol = "deesser_frequency"; parameter.unit = "Hz";
+            parameter.ranges.def = 6000.0f; parameter.ranges.min = 1000.0f; parameter.ranges.max = 16000.0f;
+            break;
+        case kParamDeEsserThreshold:
+            parameter.name = "De-esser Threshold"; parameter.symbol = "deesser_threshold"; parameter.unit = "dB";
+            parameter.ranges.def = -30.0f; parameter.ranges.min = -60.0f; parameter.ranges.max = 0.0f;
+            break;
+        case kParamDeEsserReduction:
+            parameter.name = "De-esser Reduction"; parameter.symbol = "deesser_reduction"; parameter.unit = "dB";
+            parameter.ranges.def = 12.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 24.0f;
+            break;
+        case kParamDeEsserBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "De-esser Bypass"; parameter.symbol = "deesser_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
         // --- Cabinet (convolves with a loaded speaker-cab impulse
         // response - see core/CabinetBlock.hpp. The IR file path itself
         // is DPF State, not a parameter; see initState() below) ---
@@ -392,7 +471,7 @@ protected:
         case kParamCabinetPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Cabinet Position"; parameter.symbol = "cabinet_position";
-            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamCabinetMix:
             parameter.name = "Cabinet Mix"; parameter.symbol = "cabinet_mix";
@@ -417,7 +496,7 @@ protected:
         case kParamChorusPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Chorus Position"; parameter.symbol = "chorus_position";
-            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamChorusRate:
             parameter.name = "Chorus Rate"; parameter.symbol = "chorus_rate"; parameter.unit = "Hz";
@@ -441,7 +520,7 @@ protected:
         case kParamPhaserPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Phaser Position"; parameter.symbol = "phaser_position";
-            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamPhaserRate:
             parameter.name = "Phaser Rate"; parameter.symbol = "phaser_rate"; parameter.unit = "Hz";
@@ -465,7 +544,7 @@ protected:
         case kParamTremoloPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Tremolo Position"; parameter.symbol = "tremolo_position";
-            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamTremoloRate:
             parameter.name = "Tremolo Rate"; parameter.symbol = "tremolo_rate"; parameter.unit = "Hz";
@@ -485,7 +564,7 @@ protected:
         case kParamDelayPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Delay Position"; parameter.symbol = "delay_position";
-            parameter.ranges.def = 11.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 11.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamDelayTime:
             parameter.name = "Delay Time"; parameter.symbol = "delay_time"; parameter.unit = "ms";
@@ -509,7 +588,7 @@ protected:
         case kParamReverbPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Reverb Position"; parameter.symbol = "reverb_position";
-            parameter.ranges.def = 12.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 12.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamReverbRoomSize:
             parameter.name = "Reverb Room Size"; parameter.symbol = "reverb_room_size";
@@ -643,7 +722,7 @@ protected:
             // real fix is this renumbering, which gives every block from
             // Gate(0) through Reverb(12) - 13 blocks total including NAM -
             // its own unique slot again.)
-            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
             break;
         case kParamNamInputTrim:
             parameter.name = "NAM Input Trim"; parameter.symbol = "nam_input_trim"; parameter.unit = "dB";
@@ -713,6 +792,20 @@ protected:
         case kParamAmpVolume:        return ampVolume;
         case kParamAmpOn:            return ampOn ? 1.0f : 0.0f;
         case kParamAmpBypass:        return ampBypass ? 1.0f : 0.0f;
+
+        case kParamAutotuneOn:       return autotuneOn ? 1.0f : 0.0f;
+        case kParamAutotunePosition: return autotunePosition;
+        case kParamAutotuneKey:      return autotuneKey;
+        case kParamAutotuneScale:    return autotuneScale;
+        case kParamAutotuneSpeed:    return autotuneSpeed;
+        case kParamAutotuneBypass:   return autotuneBypass ? 1.0f : 0.0f;
+
+        case kParamDeEsserOn:        return deEsserOn ? 1.0f : 0.0f;
+        case kParamDeEsserPosition:  return deEsserPosition;
+        case kParamDeEsserFrequency: return deEsserFrequency;
+        case kParamDeEsserThreshold: return deEsserThreshold;
+        case kParamDeEsserReduction: return deEsserReduction;
+        case kParamDeEsserBypass:    return deEsserBypass ? 1.0f : 0.0f;
 
         case kParamCabinetOn:       return cabinetOn ? 1.0f : 0.0f;
         case kParamCabinetPosition: return cabinetPosition;
@@ -868,6 +961,32 @@ protected:
         case kParamAmpBypass:
             ampBypass = value > 0.5f; chain.setEnabled(&ampBlock, ampOn && !ampBypass); break;
 
+        case kParamAutotuneOn:
+            autotuneOn = value > 0.5f; chain.setEnabled(&autotuneBlock, autotuneOn && !autotuneBypass); break;
+        case kParamAutotunePosition:
+            autotunePosition = value; chain.setPosition(&autotuneBlock, static_cast<int>(std::round(value))); break;
+        case kParamAutotuneKey:
+            autotuneKey = value; autotuneBlock.setKey(static_cast<int>(std::round(value))); break;
+        case kParamAutotuneScale:
+            autotuneScale = value; autotuneBlock.setScale(static_cast<int>(std::round(value))); break;
+        case kParamAutotuneSpeed:
+            autotuneSpeed = value; autotuneBlock.setRetuneSpeed(value); break;
+        case kParamAutotuneBypass:
+            autotuneBypass = value > 0.5f; chain.setEnabled(&autotuneBlock, autotuneOn && !autotuneBypass); break;
+
+        case kParamDeEsserOn:
+            deEsserOn = value > 0.5f; chain.setEnabled(&deEsserBlock, deEsserOn && !deEsserBypass); break;
+        case kParamDeEsserPosition:
+            deEsserPosition = value; chain.setPosition(&deEsserBlock, static_cast<int>(std::round(value))); break;
+        case kParamDeEsserFrequency:
+            deEsserFrequency = value; deEsserBlock.setFrequency(value); break;
+        case kParamDeEsserThreshold:
+            deEsserThreshold = value; deEsserBlock.setThresholdDB(value); break;
+        case kParamDeEsserReduction:
+            deEsserReduction = value; deEsserBlock.setReductionDB(value); break;
+        case kParamDeEsserBypass:
+            deEsserBypass = value > 0.5f; chain.setEnabled(&deEsserBlock, deEsserOn && !deEsserBypass); break;
+
         case kParamCabinetOn:
             cabinetOn = value > 0.5f; chain.setEnabled(&cabinetBlock, cabinetOn && !cabinetBypass); break;
         case kParamCabinetPosition:
@@ -1013,6 +1132,8 @@ protected:
         tremoloBlock.setSampleRate(newSampleRate);
         delayBlock.setSampleRate(newSampleRate);
         reverbBlock.setSampleRate(newSampleRate);
+        autotuneBlock.setSampleRate(newSampleRate);
+        deEsserBlock.setSampleRate(newSampleRate);
         tunerDetector.setSampleRate(newSampleRate);
 
         // The Cabinet block resamples its IR to whatever sample rate was
@@ -1283,6 +1404,8 @@ private:
     ampforge::TremoloBlock tremoloBlock;
     ampforge::DelayBlock delayBlock;
     ampforge::ReverbBlock reverbBlock;
+    ampforge::AutotuneBlock autotuneBlock;
+    ampforge::DeEsserBlock deEsserBlock;
     ampforge::EffectChain chain;
 
     // Input - applied directly in run(), ahead of the chain, rather than
@@ -1338,6 +1461,14 @@ private:
     bool ampOn = true;
     float ampPosition = 5.0f, ampDrive = 0.0f, ampBass = 0.0f, ampMid = 0.0f, ampTreble = 0.0f, ampVolume = 0.0f;
     float ampType = 0.0f; // index into ampforge::kAmpVoicings; 0 = Modern
+
+    bool autotuneOn = false;
+    float autotunePosition = 13.0f, autotuneKey = 0.0f, autotuneScale = 0.0f, autotuneSpeed = 0.5f;
+    bool autotuneBypass = false;
+
+    bool deEsserOn = false;
+    float deEsserPosition = 14.0f, deEsserFrequency = 6000.0f, deEsserThreshold = -30.0f, deEsserReduction = 12.0f;
+    bool deEsserBypass = false;
 
     bool namOn = false;
     // Position 7 - right after Cabinet, before Chorus - see

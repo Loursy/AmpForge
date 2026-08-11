@@ -98,6 +98,8 @@ static const PresetDefinition kPresets[kProgramCount] =
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
         }
     },
 
@@ -135,6 +137,8 @@ static const PresetDefinition kPresets[kProgramCount] =
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
         }
     },
 
@@ -171,6 +175,8 @@ static const PresetDefinition kPresets[kProgramCount] =
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
         }
     },
 
@@ -207,6 +213,8 @@ static const PresetDefinition kPresets[kProgramCount] =
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
         }
     },
 
@@ -236,6 +244,8 @@ static const PresetDefinition kPresets[kProgramCount] =
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
         }
     },
 
@@ -266,6 +276,8 @@ static const PresetDefinition kPresets[kProgramCount] =
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
         }
     },
 
@@ -306,6 +318,8 @@ static const PresetDefinition kPresets[kProgramCount] =
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
         }
     },
 };

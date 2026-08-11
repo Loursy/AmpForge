@@ -1,26 +1,32 @@
 ; AmpForge Windows installer.
 ;
 ; Packages the VST3/CLAP/LV2 binaries produced by the mingw-w64 cross-compile
-; (see README's "Building for Windows" section) into a real, double-clickable
+; (see cmake/toolchain-mingw64.cmake) into a real, double-clickable
 ; Setup.exe - installing each format into the same standard per-machine
 ; locations a Windows DAW/host already scans, instead of a Windows user
 ; having to manually copy plugin folders into Program Files themselves.
 ;
 ; Build (from the repo root, after the cross-compile build in
-; build-windows/ already exists):
+; build-windows/ already exists) - installer/windows/build.sh does both
+; steps in one go, and is what CI (.github/workflows/windows-build.yml)
+; runs too:
 ;   makensis installer/windows/ampforge.nsi
 ; Output: build-windows/AmpForge-<version>-Setup.exe
 
 !include "MUI2.nsh"
 
 !define PRODUCT_NAME "AmpForge"
-; No CMake project(... VERSION ...) exists yet - bump this by hand
-; alongside installer/linux/package.sh's own VERSION and the git tag,
-; every time a release goes out. This isn't rebuilt/republished on
-; every Linux release (no Windows cross-build CI yet - see the
-; README's Project status section), so it can trail a release or two
-; behind if only Linux changed.
-!define PRODUCT_VERSION "0.2.0"
+; Bump this by hand alongside installer/linux/package.sh's own VERSION
+; default and the git tag, every time a release goes out - keeps a plain
+; `makensis installer/windows/ampforge.nsi` (no override) doing the right
+; thing. installer/windows/build.sh and CI instead pass the real version
+; via `makensis -DPRODUCT_VERSION=x.y.z ...` (derived from the git tag on
+; a release), which this !ifndef lets take precedence over the hardcoded
+; fallback below - same VERSION-env-var-with-a-fallback pattern
+; installer/linux/package.sh uses.
+!ifndef PRODUCT_VERSION
+!define PRODUCT_VERSION "0.3.0"
+!endif
 !define PRODUCT_WEB_SITE "https://github.com/Loursy/AmpForge"
 !define BUILD_DIR "..\..\build-windows\bin"
 !define UNINSTALL_KEY "Software\Microsoft\Windows\CurrentVersion\Uninstall\AmpForge"

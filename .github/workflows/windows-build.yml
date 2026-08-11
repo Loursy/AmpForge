@@ -1,0 +1,94 @@
+name: Windows build
+
+# Cross-compiles the Windows plugins (VST3/CLAP/LV2 - no standalone .exe,
+# see installer/windows/build.sh's comment on why) with mingw-w64 from a
+# Linux runner rather than building natively on a windows-latest one -
+# matches how this has always been built locally (cmake/toolchain-mingw64.cmake),
+# and needs no separately-maintained Windows image/toolchain. Runs
+# installer/windows/build.sh, so a build here reproduces exactly what a
+# dev machine produces, same relationship linux-build.yml has to
+# installer/linux/docker-build.sh.
+#
+# On a `v*` tag push, this uploads the built AmpForge-<version>-Setup.exe
+# as an asset onto the same GitHub Release that
+# .github/workflows/linux-build.yml creates for the Linux tarball. That
+# release is NOT created here - the two workflows both trigger off the
+# same tag push independently, with no ordering guarantee between them,
+# so creating it in both places would race. Instead this waits for the
+# Linux workflow's release to show up first, then attaches the installer
+# to it.
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed for `gh release upload` on a tag push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install mingw-w64 cross-compiler, NSIS, and Wine
+        # Wine is needed mid-build, not just for testing - see
+        # cmake/toolchain-mingw64.cmake's CMAKE_CROSSCOMPILING_EMULATOR
+        # comment for why. Ubuntu's `wine` package still pulls in a
+        # 32-bit (i386) dependency even though our target is 64-bit-only,
+        # so the i386 architecture has to be enabled first or the install
+        # itself fails.
+        run: |
+          sudo dpkg --add-architecture i386
+          sudo apt-get update
+          sudo apt-get install -y mingw-w64 nsis wine xvfb
+
+      - name: Determine release version from the git tag
+        id: version
+        # Mirrors linux-build.yml's own version step - keep both in sync
+        # if this logic ever changes. Only set on an actual `v*` tag push;
+        # installer/windows/build.sh's VERSION fallback (ampforge.nsi's
+        # own hardcoded PRODUCT_VERSION) covers every other trigger.
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build plugins and package the installer
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        # xvfb-run gives the mid-build Wine step (see above) a virtual
+        # display - it attempts an OpenGL context as part of generating
+        # LV2 metadata, and this runner has no real one.
+        run: xvfb-run -a installer/windows/build.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ampforge-windows-setup
+          path: build-windows/AmpForge-*-Setup.exe
+          if-no-files-found: error
+
+      - name: Wait for the Linux release job to publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "error: release $GITHUB_REF_NAME never showed up after 10 minutes (did linux-build.yml fail?)" >&2
+          exit 1
+
+      - name: Attach Windows installer to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" build-windows/AmpForge-*-Setup.exe --clobber

@@ -216,6 +216,42 @@ enum Parameters
     kParamAmpOn,
     kParamAmpBypass,
 
+    // Autotune - classic "hard-tune" vocal pitch correction
+    // (core/AutotuneBlock.hpp), the first block in the chain that isn't
+    // guitar-oriented (Chorus/Phaser/Tremolo/Delay/Reverb are generic
+    // enough to double as vocal effects too, but this one only makes
+    // sense for a voice). Sits in the same reorderable pedalboard as
+    // everything else - a "vocal chain" is just Amp/Cabinet/NAM turned
+    // off and this (plus Delay/Reverb) turned on, same mechanism as
+    // switching between guitar tones. Key is 0-11 (C..B), Scale indexes
+    // ampforge::kScales (Chromatic/Major/Minor), Speed is the classic
+    // autotune "Retune Speed" knob (0 = slow glide into the correction,
+    // 1 = the near-instant robotic snap) - see AutotuneBlock.hpp's
+    // comment for what it actually controls. Appended at the end like
+    // every block above, so existing parameter indices/presets stay
+    // unchanged.
+    kParamAutotuneOn,
+    kParamAutotunePosition,
+    kParamAutotuneKey,
+    kParamAutotuneScale,
+    kParamAutotuneSpeed,
+    kParamAutotuneBypass,
+
+    // De-esser - the second vocal-only block (core/DeEsserBlock.hpp),
+    // tames harsh "s"/"sh" sibilance. Frequency is where the sibilant
+    // band starts (typically 4-9kHz depending on the voice), Threshold
+    // is the level (in that band) above which it kicks in, Reduction is
+    // the maximum amount of gain reduction it's allowed to apply -
+    // see DeEsserBlock.hpp's comment for the split-band technique this
+    // uses. Appended at the end like every block above, so existing
+    // parameter indices/presets stay unchanged.
+    kParamDeEsserOn,
+    kParamDeEsserPosition,
+    kParamDeEsserFrequency,
+    kParamDeEsserThreshold,
+    kParamDeEsserReduction,
+    kParamDeEsserBypass,
+
     // Output-only meters (kParameterIsOutput) - deliberately grouped here,
     // all together at the very end, rather than appended next to the
     // input/feature they each report on (which is where they originally

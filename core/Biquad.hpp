@@ -18,7 +18,7 @@ namespace ampforge {
 class Biquad
 {
 public:
-    enum class Type { LowShelf, Peak, HighShelf };
+    enum class Type { LowShelf, Peak, HighShelf, HighPass };
 
     void setSampleRate(double sr) { sampleRate = sr; }
 
@@ -56,6 +56,19 @@ public:
             a0 =        (A+1) - (A-1)*cosw0 + 2*sqrtA*alpha;
             a1 =    2*((A-1) - (A+1)*cosw0);
             a2 =        (A+1) - (A-1)*cosw0 - 2*sqrtA*alpha;
+            break;
+        }
+        case Type::HighPass:
+        {
+            // Standard RBJ 2nd-order high-pass - unlike the shelf/peak
+            // types above, this one doesn't boost or cut, only rolls off
+            // everything below freq, so it ignores gainDB/A entirely.
+            b0 =  (1 + cosw0) / 2;
+            b1 = -(1 + cosw0);
+            b2 =  (1 + cosw0) / 2;
+            a0 =   1 + alpha;
+            a1 =  -2 * cosw0;
+            a2 =   1 - alpha;
             break;
         }
         case Type::Peak:

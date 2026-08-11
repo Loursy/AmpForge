@@ -24,6 +24,7 @@
 #include "ChainParameters.hpp"
 #include "ChainPresets.hpp"
 #include "AmpBlock.hpp"
+#include "AutotuneBlock.hpp"
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -73,6 +74,10 @@ static constexpr float kTopBarHeight     = 52.0f;
 static constexpr float kControlBarHeight = 44.0f;
 static constexpr float kPaletteWidth     = 190.0f;
 static constexpr float kPaletteItemH     = 42.0f;
+// Reserved, unscrolled space at the bottom of the palette for its "Click
+// or drag..." hint text - the row list above it is what actually scrolls
+// (see paletteScrollOffset) once there are more pedal types than fit.
+static constexpr float kPaletteFooterH   = 26.0f;
 static constexpr float kRackTop          = kTopBarHeight + kControlBarHeight + 20.0f;
 static constexpr float kModuleLeft       = kPaletteWidth + 20.0f;
 static constexpr float kModuleHeaderH    = 42.0f;
@@ -149,6 +154,11 @@ struct KnobDef
     // Same idea as isSyncDivision, but for ampforge::kAmpVoicings
     // (core/AmpBlock.hpp) instead - the Amp card's "Type" knob.
     bool isAmpType = false;
+    // Same idea again, for ampforge::kScales (core/AutotuneBlock.hpp) -
+    // the Autotune card's "Scale" knob - and for the 12 semitone names
+    // (kNoteNames below) for its "Key" knob.
+    bool isAutotuneScale = false;
+    bool isAutotuneKey = false;
 };
 
 // Varies the card's enclosure silhouette - drawn by drawStompboxBody().
@@ -186,6 +196,8 @@ enum class StompIcon
     Delay,
     Reverb,
     Neural,
+    Autotune,
+    DeEsser,
 };
 
 struct PedalDef
@@ -217,6 +229,11 @@ struct PedalDef
     // hardcoded label doesn't fit both. Trailing field (after shape/icon)
     // so every existing positional initializer below stays valid as-is.
     const char* fileLoaderLabel = "Load File...";
+    // True for pedals that only make sense on a voice, not a guitar
+    // (currently just Autotune) - drives the palette's GUITAR/VOCAL
+    // section split (see kPaletteRows below). Trailing field, same
+    // reasoning as fileLoaderLabel above.
+    bool isVocal = false;
 };
 
 // clang-format off
@@ -297,9 +314,28 @@ static const PedalDef kPedalDefs[] =
         { "Mix",     kParamNamMix,             0.0f, 1.0f,  "",   0, true },
         { "Out",     kParamNamOutputLevel,  -24.0f, 12.0f, "dB", 1, false },
     }, true, kNamModelStateKey, StompShape::HexCut, StompIcon::Neural, "Load NAM Model..." },
+    // Appended at the end like Distortion/Cabinet/NAM above, same
+    // reasoning (existing entries' indices stay stable). The only pedal
+    // here with isVocal = true - see kPaletteRows below for what that
+    // drives in the palette.
+    { "Autotune",   kParamAutotuneOn, kParamAutotuneBypass, kParamAutotunePosition, 13, Color(255, 130, 175), {
+        { "Key",     kParamAutotuneKey,   0.0f, 11.0f, "", 0, false, false, false, false, true },
+        { "Scale",   kParamAutotuneScale, 0.0f, float(ampforge::kScaleCount - 1), "", 0, false, false, false, true },
+        { "Speed",   kParamAutotuneSpeed, 0.0f, 1.0f,  "", 0, true },
+    }, false, nullptr, StompShape::Standard, StompIcon::Autotune, "Load File...", true },
+    { "De-esser",   kParamDeEsserOn, kParamDeEsserBypass, kParamDeEsserPosition, 14, Color(120, 200, 220), {
+        { "Freq",      kParamDeEsserFrequency, 1000.0f, 16000.0f, "Hz", 0, false },
+        { "Thresh",    kParamDeEsserThreshold,   -60.0f,    0.0f, "dB", 1, false },
+        { "Reduction", kParamDeEsserReduction,     0.0f,   24.0f, "dB", 1, false },
+    }, false, nullptr, StompShape::Mini, StompIcon::DeEsser, "Load File...", true },
 };
 // clang-format on
 static constexpr int kPedalDefCount = sizeof(kPedalDefs) / sizeof(kPedalDefs[0]);
+
+// Shared with formatKnobValue()'s isAutotuneKey handling and
+// frequencyToNote() (the Tuner overlay) - both need the same 12 semitone
+// names, so this lives here once instead of as two separate copies.
+static const char* const kNoteNames[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
 
 // The Input panel's Gain knob isn't part of kPedalDefs (it's a fixed
 // pre-chain trim, not a reorderable/toggleable pedal - see
@@ -312,22 +348,64 @@ static constexpr int kPedalDefCount = sizeof(kPedalDefs) / sizeof(kPedalDefs[0])
 static constexpr int kInputPedalIndex = kPedalDefCount;
 static const KnobDef kInputGainKnob = { "Gain", kParamInputGain, -24.0f, 24.0f, "dB", 1, false };
 
-// The palette lists pedals in recommended signal-chain order (matching
-// where they actually land in the rack via defaultPosition), not in
-// kPedalDefs's own array order - new pedal types get appended at the end
-// of that array to keep existing indices stable (see PedalDef's comment
-// above), which would otherwise leave them looking randomly tacked on at
-// the bottom of the palette instead of near where they belong tonally.
-static const std::vector<int> kPaletteOrder = []()
+// One row in the palette - either a pedal (pedalIndex >= 0) or a section
+// header (isHeader, pedalIndex == -1) splitting GUITAR from VOCAL pedals.
+// y/height are computed once, right here, rather than derived from a
+// `row * kPaletteItemH` formula at each of the palette's render/hit-test
+// call sites - this file already has an explicit, commented lesson
+// (rackModuleWidth()'s comment) about that exact kind of duplicated
+// layout formula causing a real bug, so this follows the fix it already
+// adopted instead of repeating the mistake. Header rows are shorter than
+// pedal rows, which is exactly the case a single shared formula can't
+// express anyway.
+struct PaletteRow
 {
-    std::vector<int> order;
+    bool isHeader;
+    const char* headerLabel;
+    int pedalIndex; // -1 for a header row
+    float y;
+    float height;
+};
+
+static constexpr float kPaletteHeaderH = 24.0f;
+
+// Guitar pedals first (in recommended signal-chain order, matching where
+// they actually land in the rack via defaultPosition - not kPedalDefs's
+// own array order, since new pedal types get appended at the end of that
+// array to keep existing indices stable, see PedalDef's comment above),
+// then a "VOCAL" header and the vocal-only pedals (currently just
+// Autotune - see PedalDef::isVocal) the same way.
+static const std::vector<PaletteRow> kPaletteRows = []()
+{
+    std::vector<int> guitarIdx, vocalIdx;
     for (int i = 0; i < kPedalDefCount; ++i)
-        order.push_back(i);
-    std::sort(order.begin(), order.end(), [](int a, int b)
+        (kPedalDefs[i].isVocal ? vocalIdx : guitarIdx).push_back(i);
+
+    const auto byDefaultPosition = [](int a, int b)
     {
         return kPedalDefs[a].defaultPosition < kPedalDefs[b].defaultPosition;
-    });
-    return order;
+    };
+    std::sort(guitarIdx.begin(), guitarIdx.end(), byDefaultPosition);
+    std::sort(vocalIdx.begin(), vocalIdx.end(), byDefaultPosition);
+
+    std::vector<PaletteRow> rows;
+    float y = kRackTop;
+    for (int i : guitarIdx)
+    {
+        rows.push_back({ false, nullptr, i, y, kPaletteItemH });
+        y += kPaletteItemH;
+    }
+    if (!vocalIdx.empty())
+    {
+        rows.push_back({ true, "VOCAL", -1, y, kPaletteHeaderH });
+        y += kPaletteHeaderH;
+        for (int i : vocalIdx)
+        {
+            rows.push_back({ false, nullptr, i, y, kPaletteItemH });
+            y += kPaletteItemH;
+        }
+    }
+    return rows;
 }();
 
 // A blank starting point for "+ New Preset" - only Amp present, flat
@@ -354,6 +432,8 @@ static const float kBlankPresetValues[kParamCount] =
     0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
     /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
     /* Amp on,bypass */                                1.0f, 0.0f,
+    /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+    /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
 };
 // clang-format on
 
@@ -670,19 +750,19 @@ protected:
         // --- Palette: press-and-hold starts a potential drag ---
         if (mx < kPaletteWidth && my > kTopBarHeight + kControlBarHeight)
         {
-            for (size_t row = 0; row < kPaletteOrder.size(); ++row)
+            for (const PaletteRow& row : kPaletteRows)
             {
-                const float itemY = kRackTop + static_cast<float>(row) * kPaletteItemH;
-                if (my >= itemY && my < itemY + kPaletteItemH)
-                {
-                    paletteDraggingPedal = kPaletteOrder[row];
-                    paletteDragMoved = false;
-                    paletteDragStartX = mx;
-                    paletteDragStartY = my;
-                    paletteDragCurrentX = mx;
-                    paletteDragCurrentY = my;
-                    return true;
-                }
+                const float itemY = row.y + paletteScrollOffset;
+                if (row.isHeader || my < itemY || my >= itemY + row.height)
+                    continue;
+
+                paletteDraggingPedal = row.pedalIndex;
+                paletteDragMoved = false;
+                paletteDragStartX = mx;
+                paletteDragStartY = my;
+                paletteDragCurrentX = mx;
+                paletteDragCurrentY = my;
+                return true;
             }
             return false;
         }
@@ -903,6 +983,18 @@ protected:
 
     bool onScroll(const ScrollEvent& ev) override
     {
+        if (static_cast<float>(ev.pos.getX()) < kPaletteWidth)
+        {
+            const float contentHeight = paletteContentHeight();
+            const float visibleHeight = static_cast<float>(getHeight()) - kRackTop - kPaletteFooterH;
+            const float maxScroll = std::max(0.0f, contentHeight - visibleHeight);
+
+            paletteScrollOffset += static_cast<float>(ev.delta.getY()) * 24.0f;
+            paletteScrollOffset = std::max(-maxScroll, std::min(0.0f, paletteScrollOffset));
+            repaint();
+            return true;
+        }
+
         const float contentHeight = totalContentHeight();
         const float visibleHeight = static_cast<float>(getHeight()) - kPedalRackTop;
         const float maxScroll = std::max(0.0f, contentHeight - visibleHeight);
@@ -1826,6 +1918,18 @@ private:
         return static_cast<float>(order.size()) * moduleH + static_cast<float>(order.size() - 1) * kModuleGap;
     }
 
+    // Same idea as totalContentHeight() above, for the palette's own row
+    // list - kPaletteRows already carries each row's absolute y/height
+    // (see its own comment for why), so the total is just the last row's
+    // bottom edge relative to where the list starts.
+    static float paletteContentHeight()
+    {
+        if (kPaletteRows.empty())
+            return 0.0f;
+        const PaletteRow& last = kPaletteRows.back();
+        return (last.y + last.height) - kRackTop;
+    }
+
     // ---------------- Tuner ----------------
 
     struct NoteInfo
@@ -1841,8 +1945,6 @@ private:
     // in cents (1/100 semitone), is exactly what the tuner needle shows.
     static NoteInfo frequencyToNote(float hz)
     {
-        static const char* const kNoteNames[12] = { "C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B" };
-
         const float midiFloat = 69.0f + 12.0f * std::log2(hz / 440.0f);
         const int midiRounded = static_cast<int>(std::round(midiFloat));
         const float cents = (midiFloat - static_cast<float>(midiRounded)) * 100.0f;
@@ -1880,6 +1982,16 @@ private:
         {
             const int idx = std::clamp(static_cast<int>(std::round(value)), 0, ampforge::kAmpVoicingCount - 1);
             std::snprintf(buf, bufSize, "%s", ampforge::kAmpVoicings[idx].name);
+        }
+        else if (knob.isAutotuneScale)
+        {
+            const int idx = std::clamp(static_cast<int>(std::round(value)), 0, ampforge::kScaleCount - 1);
+            std::snprintf(buf, bufSize, "%s", ampforge::kScales[idx].name);
+        }
+        else if (knob.isAutotuneKey)
+        {
+            const int idx = std::clamp(static_cast<int>(std::round(value)), 0, 11);
+            std::snprintf(buf, bufSize, "%s", kNoteNames[idx]);
         }
         else if (knob.asPercent)
             std::snprintf(buf, bufSize, "%.0f%%", value * 100.0f);
@@ -2395,10 +2507,30 @@ private:
         fill();
         closePath();
 
-        for (size_t row = 0; row < kPaletteOrder.size(); ++row)
+        const float paletteVisibleBottom = height - kPaletteFooterH;
+
+        save();
+        // Clipped so a scrolled row can't visually draw over the top bar
+        // above or the footer hint text below - same reasoning as
+        // drawRack()'s own scissor around its card stack.
+        scissor(0.0f, kRackTop, kPaletteWidth, paletteVisibleBottom - kRackTop);
+
+        for (const PaletteRow& row : kPaletteRows)
         {
-            const int i = kPaletteOrder[row];
-            const float itemY = kRackTop + static_cast<float>(row) * kPaletteItemH;
+            const float itemY = row.y + paletteScrollOffset;
+            if (itemY + row.height < kRackTop || itemY > paletteVisibleBottom)
+                continue; // scrolled out of view - skip drawing it
+
+            if (row.isHeader)
+            {
+                fontSize(10.5f);
+                fillColor(kColorTextMuted.withAlpha(0.6f));
+                textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+                text(12.0f, itemY + row.height * 0.5f, row.headerLabel, nullptr);
+                continue;
+            }
+
+            const int i = row.pedalIndex;
             const Color& accent = kPedalDefs[i].accent;
             const bool isActive = paramValues[kPedalDefs[i].onParam] > 0.5f;
             const bool isBeingDragged = (i == paletteDraggingPedal && paletteDragMoved);
@@ -2428,16 +2560,43 @@ private:
                 closePath();
             }
 
-            beginPath();
-            circle(24.0f, itemY + kPaletteItemH * 0.5f, 5.0f);
-            fillColor(isActive ? Color(accent, Color(255, 255, 255), 0.3f) : kColorOff);
-            fill();
-            closePath();
+            // The pedal's own stomp-icon glyph (same one the rack card's
+            // header badge uses - see drawStompIcon()) instead of a plain
+            // dot, so the palette reads as more than just a name list.
+            drawStompIcon(24.0f, itemY + kPaletteItemH * 0.5f, kPedalDefs[i].icon,
+                          isActive ? Color(accent, Color(255, 255, 255), 0.3f) : kColorOff, 1.0f);
 
             fontSize(14.0f);
             fillColor(isBeingDragged ? kColorTextMuted : (isActive ? kColorTextDark : kColorTextMuted));
             textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
             text(42.0f, itemY + kPaletteItemH * 0.5f, kPedalDefs[i].name, nullptr);
+        }
+
+        restore();
+
+        // Scrollbar - same look/placement logic as the rack's own (see
+        // drawRack()), just along the palette's right edge instead.
+        const float paletteContentH = paletteContentHeight();
+        const float paletteVisibleH = paletteVisibleBottom - kRackTop;
+        if (paletteContentH > paletteVisibleH)
+        {
+            const float trackH = paletteVisibleH - 10.0f;
+            const float thumbH = std::max(24.0f, trackH * (paletteVisibleH / paletteContentH));
+            const float scrollFrac = (-paletteScrollOffset) / std::max(1.0f, paletteContentH - paletteVisibleH);
+            const float thumbY = kRackTop + 5.0f + scrollFrac * (trackH - thumbH);
+            const float scrollbarX = kPaletteWidth - 8.0f;
+
+            beginPath();
+            roundedRect(scrollbarX, kRackTop + 5.0f, 4.0f, trackH, 2.0f);
+            fillColor(Color(255, 255, 255, 0.04f));
+            fill();
+            closePath();
+
+            beginPath();
+            roundedRect(scrollbarX, thumbY, 4.0f, thumbH, 2.0f);
+            fillColor(kColorScrollbar);
+            fill();
+            closePath();
         }
 
         fontSize(10.5f);
@@ -3286,6 +3445,51 @@ private:
             }
             break;
         }
+        case StompIcon::Autotune:
+        {
+            // A simple microphone: rounded capsule head, a stand, and a
+            // small base - reads as "vocal" at a glance among the guitar
+            // pedal icons around it.
+            beginPath();
+            roundedRect(cx - 3.5f, cy - 7.0f, 7.0f, 10.0f, 3.5f);
+            fill();
+            closePath();
+            beginPath();
+            arc(cx, cy - 1.0f, 6.0f, 0.15f * static_cast<float>(M_PI), 0.85f * static_cast<float>(M_PI), CW);
+            stroke();
+            closePath();
+            beginPath();
+            moveTo(cx, cy + 5.0f);
+            lineTo(cx, cy + 8.0f);
+            moveTo(cx - 3.5f, cy + 8.0f);
+            lineTo(cx + 3.5f, cy + 8.0f);
+            stroke();
+            closePath();
+            break;
+        }
+        case StompIcon::DeEsser:
+        {
+            // A sharp, jagged high-frequency spike (the "s" hiss) with a
+            // downward arrow next to it - being pushed down, unlike
+            // Overdrive/Distortion's icons which show a wave getting
+            // clipped rather than reduced.
+            beginPath();
+            moveTo(cx - 8.0f, cy + 2.0f);
+            lineTo(cx - 5.0f, cy - 6.0f);
+            lineTo(cx - 2.0f, cy + 2.0f);
+            lineTo(cx + 1.0f, cy - 6.0f);
+            stroke();
+            closePath();
+            beginPath();
+            moveTo(cx + 5.0f, cy - 5.0f);
+            lineTo(cx + 5.0f, cy + 5.0f);
+            moveTo(cx + 2.0f, cy + 2.0f);
+            lineTo(cx + 5.0f, cy + 6.0f);
+            lineTo(cx + 8.0f, cy + 2.0f);
+            stroke();
+            closePath();
+            break;
+        }
         case StompIcon::None:
         default:
             break;
@@ -3682,6 +3886,10 @@ private:
     float paletteDragCurrentX = 0.0f, paletteDragCurrentY = 0.0f;
 
     float scrollOffset = 0.0f;
+    // Same idea as scrollOffset above, but for the palette's own pedal
+    // list (kPaletteRows) - the two scroll independently since they're
+    // separate columns with separate content heights.
+    float paletteScrollOffset = 0.0f;
 
     bool presetDropdownOpen = false;
     float dropdownAnim = 0.0f;
