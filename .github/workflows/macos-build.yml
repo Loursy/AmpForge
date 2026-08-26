@@ -1,0 +1,88 @@
+name: macOS build
+
+# Builds the macOS plugins natively on a macos-latest runner - unlike
+# windows-build.yml, no cross-compile toolchain is needed: DPF targets
+# macOS directly through its own CoreAudio/CoreMIDI/Cocoa backends, so this
+# just runs installer/macos/build.sh the same way linux-build.yml runs
+# installer/linux/docker-build.sh (minus the Docker wrapper, since there's
+# no glibc-portability concern to build around here - macOS has no
+# equivalent moving-target ABI baseline issue).
+#
+# Builds are NOT code-signed or notarized (that needs a paid Apple
+# Developer account this project doesn't have) - installer/macos/install.sh
+# clears the quarantine flag itself to route around the resulting "is
+# damaged" Gatekeeper dialog, and the README calls this out for anyone
+# installing by hand instead.
+#
+# On a `v*` tag push, this uploads the built AmpForge-<version>-macos.zip
+# as an asset onto the same GitHub Release that
+# .github/workflows/linux-build.yml creates - mirrors windows-build.yml's
+# own "wait for the Linux release, then attach" approach exactly, for the
+# same reason (both workflows trigger off the same tag push independently,
+# with no ordering guarantee between them).
+on:
+  push:
+    branches: [main]
+    tags: ["v*"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write # needed for `gh release upload` on a tag push
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CMake and Ninja
+        run: brew install cmake ninja
+
+      - name: Determine release version from the git tag
+        id: version
+        # Mirrors linux-build.yml's own version step - keep both in sync
+        # if this logic ever changes. Only set on an actual `v*` tag push;
+        # installer/macos/package.sh's VERSION fallback covers every other
+        # trigger.
+        run: |
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            echo "value=${GITHUB_REF_NAME#v}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Build plugins
+        run: installer/macos/build.sh
+
+      - name: Package release zip
+        env:
+          VERSION: ${{ steps.version.outputs.value }}
+        run: installer/macos/package.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ampforge-macos
+          path: build-macos/AmpForge-*-macos.zip
+          if-no-files-found: error
+
+      - name: Wait for the Linux release job to publish the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          for i in $(seq 1 60); do
+            if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "error: release $GITHUB_REF_NAME never showed up after 10 minutes (did linux-build.yml fail?)" >&2
+          exit 1
+
+      - name: Attach macOS zip to the GitHub Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" build-macos/AmpForge-*-macos.zip --clobber

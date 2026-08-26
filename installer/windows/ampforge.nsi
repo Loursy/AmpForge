@@ -25,7 +25,7 @@
 ; fallback below - same VERSION-env-var-with-a-fallback pattern
 ; installer/linux/package.sh uses.
 !ifndef PRODUCT_VERSION
-!define PRODUCT_VERSION "0.3.0"
+!define PRODUCT_VERSION "0.4.0"
 !endif
 !define PRODUCT_WEB_SITE "https://github.com/Loursy/AmpForge"
 !define BUILD_DIR "..\..\build-windows\bin"

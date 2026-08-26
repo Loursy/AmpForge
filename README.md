@@ -1,18 +1,20 @@
 # AmpForge
 
-**A free, open-source guitar amp simulator plugin for Linux — with a
-couple of vocal effects built in too.**
+**A free, open-source guitar amp simulator plugin for Linux, Windows,
+and macOS — with several vocal effects built in too.**
 
 AmpForge is a single plugin — not a chain of separate plugins bolted
 together in a DAW — that hosts a full, reorderable pedalboard-and-amp
 chain internally, in the spirit of Guitar Rig / BIAS FX. It ships as
-**VST3**, **LV2**, **CLAP**, and a **JACK/PipeWire standalone** app,
-all built from one codebase. A **Windows installer** (VST3/CLAP/LV2,
-cross-compiled from the same codebase) is also available for Windows
-users - see [Download](#download) below.
+**VST3**, **LV2**, **CLAP**, and a **standalone** app (JACK/PipeWire on
+Linux, CoreAudio on macOS), all built from one codebase. A **Windows
+installer** (VST3/CLAP/LV2, cross-compiled from the same codebase) and
+a **macOS build** (VST3/CLAP/LV2/standalone, built natively) are also
+available - see [Download](#download) below.
 
 Linux has never really had a good, free, actively-developed answer to
-Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that.
+Guitar Rig or BIAS FX. AmpForge is an attempt at exactly that, now
+available on Windows and macOS too.
 
 ![AmpForge screenshot](docs/screenshot.png)
 
@@ -32,17 +34,29 @@ below.
 (Windows users: an installer - `AmpForge-Setup.exe` - is on the
 [Releases page](https://github.com/Loursy/AmpForge/releases) too.)
 
+(macOS users: grab `AmpForge-<version>-macos.zip` from the same
+[Releases page](https://github.com/Loursy/AmpForge/releases), extract
+it, and run `./install.sh` the same way - installs VST3/CLAP/LV2 into
+`~/Library/Audio/Plug-Ins/...` and the standalone binary into
+`~/.local/bin`. This build isn't code-signed or notarized (no paid
+Apple Developer account behind this project), so `install.sh` clears
+the quarantine flag itself; installing by hand instead, run `xattr -dr
+com.apple.quarantine` on whatever you copied to get past Gatekeeper's
+"is damaged and can't be opened" dialog.)
+
 ## Features
 
-- **15 internal modules**, freely reorderable at runtime: Noise Gate,
+- **19 internal modules**, freely reorderable at runtime: Noise Gate,
   Compressor, Wah, Screamer (overdrive), Distortion (a harder,
   asymmetric-clipping second gain stage), Amp (always present),
   Cabinet (convolves with a loaded speaker-cab impulse response), NAM
   (loads a [Neural Amp Modeler](https://github.com/sdatkinson/NeuralAmpModelerCore)
   `.nam` capture of a real amp/pedal/cab), Chorus, Phaser, Tremolo,
-  Delay, Reverb, Autotune, De-esser. See [The
-  pedals](#the-pedals) below for what every knob on every one of them
-  actually does.
+  Delay, Reverb, EQ (a 3-band parametric with adjustable centers),
+  Autotune, De-esser, Doubler (automatic double-tracking), Harmonizer
+  (a fixed-interval second voice), Exciter (harmonic top-end
+  brightener). See [The pedals](#the-pedals) below for what every knob
+  on every one of them actually does.
 - **Vocal effects** — Autotune and De-esser sit in the same reorderable
   chain as everything else, so a "vocal preset" is just Amp/Cabinet/NAM
   turned off and these (plus Delay/Reverb, already generic enough to
@@ -86,17 +100,17 @@ below.
   (0–80dB), with hysteresis and a hold time so it doesn't choke a
   note's natural decay or chatter on signal hovering near the
   threshold.
-- **7 factory presets** (Chimey Clean, British Crunch, Shredder Lead,
-  Metal Rhythm, Ambient Shoegaze, Funk Clean, Blues Rock Sustain) plus
-  **custom presets** you can save, update, delete, and export/import as
-  files (to share a tone with someone else, or between machines) from
-  within the plugin.
+- **3 factory presets** (Pristine Clean, Rock Crunch, Heavy Distortion)
+  — deliberately spread across the clean-to-heavy range rather than
+  several close variations, plus **custom presets** you can save,
+  update, delete, and export/import as files (to share a tone with
+  someone else, or between machines) from within the plugin.
 - **Every parameter is host-automatable**, with correct automation
   gesture handling (touch/undo work properly in your DAW) and proper
   boolean/integer/unit metadata for automation lanes.
 - Works as a **VST3**, **LV2**, or **CLAP** plugin in any compatible
-  host on Linux or Windows (Reaper, Carla, etc.), or as a **standalone
-  JACK/PipeWire app** on Linux.
+  host on Linux, Windows, or macOS (Reaper, Carla, Bitwig, etc.), or as
+  a **standalone app** (JACK/PipeWire on Linux, CoreAudio on macOS).
 
 ## Building from source
 
@@ -145,6 +159,17 @@ For the standalone app you'll also want a running JACK server or
 PipeWire with its JACK-compatibility layer (`pipewire-jack`) — most
 modern distros already have this. VST3/LV2 use inside a DAW or Carla
 don't need it.
+
+**macOS:**
+
+```bash
+xcode-select --install   # Xcode Command Line Tools, if not already present
+brew install cmake ninja
+```
+
+Needs **CMake 3.17+** the same as Linux above - Homebrew's `cmake` is
+comfortably ahead of that. No JACK/PipeWire equivalent is needed for
+the standalone app - it talks to CoreAudio directly.
 
 ### 2. Clone and build
 
@@ -296,6 +321,27 @@ cp -r build/bin/ampforge_main.clap ~/.clap/
 ```bash
 ./build/bin/ampforge_main
 ```
+
+**macOS**: `installer/macos/install.sh` does the same one-step install
+(run from the repo root once `build-macos/bin/` exists), or
+`installer/macos/install.sh --uninstall` to remove it again. The
+manual per-format copies are the same idea, just macOS's own plugin
+directories instead of Linux's dotfolders:
+
+```bash
+mkdir -p ~/Library/Audio/Plug-Ins/VST3
+cp -r build-macos/bin/ampforge_main.vst3 ~/Library/Audio/Plug-Ins/VST3/
+
+mkdir -p ~/Library/Audio/Plug-Ins/CLAP
+cp -r build-macos/bin/ampforge_main.clap ~/Library/Audio/Plug-Ins/CLAP/
+
+mkdir -p ~/Library/Audio/Plug-Ins/LV2
+cp -r build-macos/bin/ampforge_main.lv2 ~/Library/Audio/Plug-Ins/LV2/
+```
+
+A self-built copy runs into the same unsigned-build Gatekeeper prompt
+mentioned in [Download](#download) above - clear it the same way:
+`xattr -dr com.apple.quarantine <path>`.
 
 ## Using it
 
@@ -460,7 +506,7 @@ The status sidebar confirms what's loaded — filename and architecture
 
 ## Project status
 
-The DSP engine (all 15 modules, the reorderable chain, factory
+The DSP engine (all 19 modules, the reorderable chain, factory
 presets) and the pedalboard UI are both functional and usable today.
 Known gaps, tracked for future work:
 
@@ -488,9 +534,17 @@ Known gaps, tracked for future work:
   ([`windows-build.yml`](.github/workflows/windows-build.yml))
   cross-compiles the Windows installer the same way
   (`installer/windows/build.sh`) and attaches
-  `AmpForge-<version>-Setup.exe` to that same release, so pushing a tag
-  now publishes both platforms with no manual packaging step on either
-  side.
+  `AmpForge-<version>-Setup.exe` to that same release. A third workflow
+  ([`macos-build.yml`](.github/workflows/macos-build.yml)) builds
+  natively on a macOS runner (`installer/macos/build.sh` - no
+  cross-compile needed there, unlike Windows) and attaches
+  `AmpForge-<version>-macos.zip` the same way, so pushing a tag now
+  publishes all three platforms with no manual packaging step on any of
+  them.
+- The macOS build isn't code-signed or notarized (that needs a paid
+  Apple Developer account this project doesn't have) - see
+  [Download](#download) above for the Gatekeeper workaround this makes
+  necessary on first launch.
 
 ## Contributing
 
