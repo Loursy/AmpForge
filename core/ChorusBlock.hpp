@@ -44,6 +44,18 @@ public:
     void setDepthMs(float ms) { depthMs = ms; }
     void setMix(float m)      { mix = std::clamp(m, 0.0f, 1.0f); }
 
+    // See AudioBlock::reset()'s comment - mutates the active buffer in
+    // place, safe for the same reason DelayBlock::reset() is.
+    void reset() override
+    {
+        const int active = activeSlot.load(std::memory_order_acquire);
+        if (active < 0)
+            return;
+        std::fill(buffers[static_cast<size_t>(active)].begin(), buffers[static_cast<size_t>(active)].end(), 0.0f);
+        writeIndices[static_cast<size_t>(active)] = 0;
+        lfoPhase = 0.0f;
+    }
+
     float processSample(float input) override
     {
         const int active = activeSlot.load(std::memory_order_acquire);

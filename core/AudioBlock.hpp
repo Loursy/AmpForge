@@ -36,6 +36,20 @@ public:
 
     // The block's name - will be used in the GUI and preset files later.
     virtual const char* getName() const = 0;
+
+    // Clears whatever sample history a block is holding (a delay/reverb
+    // tail, a pitch-shifter's grain buffer, ...) - called whenever the
+    // block transitions from disabled back to enabled (see
+    // EffectChain::setEnabled()). Blocks whose internal buffer can sit
+    // frozen for an arbitrary length of time while disabled - the block
+    // is simply skipped in EffectChain::processSample(), so nothing
+    // advances or clears it - would otherwise play that stale, possibly
+    // long-past audio back out the instant they're switched on again
+    // (e.g. re-enabling a Delay whose feedback loop still holds a chunk
+    // of a completely different preset's audio). Default no-op: only
+    // blocks that actually hold such a buffer (Delay, Reverb, Chorus,
+    // Doubler, Harmonizer, Autotune) need to override this.
+    virtual void reset() {}
 };
 
 } // namespace ampforge

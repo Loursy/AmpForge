@@ -52,6 +52,20 @@ public:
 
     const char* getName() const override { return "Delay"; }
 
+    // See AudioBlock::reset()'s comment - called when this block comes
+    // back from disabled, so a feedback loop's worth of stale, possibly
+    // long-past audio can't suddenly play back out. Mutates the active
+    // buffer in place (no resize, so no allocation, and processSample()
+    // never runs concurrently while the block is still disabled).
+    void reset() override
+    {
+        const int active = activeSlot.load(std::memory_order_acquire);
+        if (active < 0)
+            return;
+        std::fill(buffers[static_cast<size_t>(active)].begin(), buffers[static_cast<size_t>(active)].end(), 0.0f);
+        writeIndices[static_cast<size_t>(active)] = 0;
+    }
+
     void setDelayTimeMs(float ms)  { delayTimeMs = ms; }
     void setFeedback(float fb)     { feedback = std::clamp(fb, 0.0f, 0.95f); } // clamped to avoid runaway feedback
     void setMix(float m)           { mix = std::clamp(m, 0.0f, 1.0f); }

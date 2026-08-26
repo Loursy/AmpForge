@@ -121,6 +121,27 @@ public:
     // 0..1 - see the class comment on the ~180ms..~4ms glide range this maps to.
     void setRetuneSpeed(float speed01) { retuneSpeed = std::clamp(speed01, 0.0f, 1.0f); }
 
+    // See AudioBlock::reset()'s comment - mutates the active buffer in
+    // place, safe for the same reason DelayBlock::reset() is. Restarts
+    // the grain heads exactly as setSampleRate() does (half a grain
+    // behind the write head - see processSample()'s retrigger comment)
+    // and glides the correction back to unity, so a re-enable doesn't
+    // resume mid-grain against now-zeroed history or snap straight back
+    // to whatever ratio was active however long ago this was last on.
+    void reset() override
+    {
+        const int active = activeSlot.load(std::memory_order_acquire);
+        if (active < 0)
+            return;
+        std::vector<float>& buffer = buffers[static_cast<size_t>(active)];
+        std::fill(buffer.begin(), buffer.end(), 0.0f);
+        writeIndices[static_cast<size_t>(active)] = 0;
+        readPosA = readPosB = wrapIndex(0.0f - grainSamples * 0.5f, buffer.size());
+        grainPhase = 0.0f;
+        headActive = true;
+        smoothedRatio = 1.0f;
+    }
+
     float processSample(float input) override
     {
         const int active = activeSlot.load(std::memory_order_acquire);

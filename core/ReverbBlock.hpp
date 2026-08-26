@@ -55,6 +55,20 @@ public:
     void setFeedback(float fb) { feedback = fb; }
     void setDamping(float d)   { damping = d; }
 
+    // See AudioBlock::reset()'s comment on ReverbBlock below - mutates the
+    // active buffer in place, safe for the same reason DelayBlock::reset()
+    // is (no resize, and process() isn't running concurrently while the
+    // owning ReverbBlock is still disabled).
+    void reset()
+    {
+        const int active = activeSlot.load(std::memory_order_acquire);
+        if (active < 0)
+            return;
+        std::fill(buffers[static_cast<size_t>(active)].begin(), buffers[static_cast<size_t>(active)].end(), 0.0f);
+        indices[static_cast<size_t>(active)] = 0;
+        stores[static_cast<size_t>(active)] = 0.0f;
+    }
+
     float process(float input)
     {
         // Safety check: if setDelaySamples() hasn't been called yet (no
@@ -124,6 +138,16 @@ public:
         return output;
     }
 
+    // Same reasoning/safety as CombFilter::reset() above.
+    void reset()
+    {
+        const int active = activeSlot.load(std::memory_order_acquire);
+        if (active < 0)
+            return;
+        std::fill(buffers[static_cast<size_t>(active)].begin(), buffers[static_cast<size_t>(active)].end(), 0.0f);
+        indices[static_cast<size_t>(active)] = 0;
+    }
+
 private:
     std::array<std::vector<float>, 2> buffers;
     std::array<size_t, 2> indices{{0, 0}};
@@ -157,6 +181,18 @@ public:
     void setRoomSize(float size) { roomSize = std::clamp(size, 0.0f, 1.0f); updateParams(); }
     void setDamping(float d)     { dampingAmount = std::clamp(d, 0.0f, 1.0f); updateParams(); }
     void setMix(float m)         { mix = std::clamp(m, 0.0f, 1.0f); }
+
+    // See AudioBlock::reset()'s comment - a Schroeder reverb's whole
+    // character comes from its combs' near-unity feedback, so a stale
+    // tail left over from before this block was disabled would otherwise
+    // ring back out (possibly for seconds) the instant it's re-enabled.
+    void reset() override
+    {
+        for (auto& comb : combs)
+            comb.reset();
+        for (auto& ap : allpasses)
+            ap.reset();
+    }
 
     float processSample(float input) override
     {

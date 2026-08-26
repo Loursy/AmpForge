@@ -58,7 +58,20 @@ START_NAMESPACE_DISTRHO
 // Bass/Mid/Treble boost downstream eats back into that same headroom, so a
 // hot mid-boost preset needs a correspondingly lower Drive than a flat-EQ
 // one to land in the same place.
-static constexpr uint32_t kProgramCount = 7;
+//
+// Amp Type (see core/AmpBlock.hpp's kAmpVoicings) now varies per preset
+// below, rather than every preset silently defaulting to Modern - each
+// voicing besides Modern has its own driveTrimDB, which
+// AmpBlock::updateDriveGain() subtracts from the user's own Drive dB
+// before the tanh stage (a positive trim is *more* headroom, i.e. *less*
+// effective gain at the same Drive setting - see that function's own
+// comment). Wherever a preset switches off Modern, its own Amp Drive
+// value has been adjusted by exactly that trim so the *effective*
+// saturation into the tanh lands back at the same point this file's own
+// decay-tracking verification above already checked - the voicing changes
+// the EQ curve and clipping asymmetry a preset gets, not how hard it's
+// actually being driven beyond what was already verified.
+static constexpr uint32_t kProgramCount = 3;
 
 struct PresetDefinition
 {
@@ -69,257 +82,124 @@ struct PresetDefinition
 // clang-format off
 static const PresetDefinition kPresets[kProgramCount] =
 {
-    // "Chimey Clean" - Amp Drive at 0dB (unity gain into the tanh stage,
-    // so it stays clean regardless of how hot the input is), gentle
-    // compression for sustain, a scooped-mid/chimey-treble EQ, a touch of
-    // vibrato (tremolo) and a subtle spring-like reverb - the classic
-    // clean American amp sound. (Named for the tone, not a brand - the
-    // Amp block is a generic saturator/EQ, not a modeled Fender circuit.)
+    // "Pristine Clean" - flat, uncolored headroom: Modern voicing, Amp
+    // Drive at 0dB (barely warms the tanh stage), no boost pedal or
+    // distortion stage, no modulation, nothing but a light comp for even
+    // level and a short room reverb for space. Deliberately the "zero
+    // coloration" reference point the other two presets are built away
+    // from.
     {
-        "Chimey Clean",
+        "Pristine Clean",
         {
             /* Gate       on,pos,thr,atk,rel      */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp       on,pos,thr,ratio,atk,rel,makeup */ 1.0f, 1.0f, -22.0f, 2.5f, 8.0f, 100.0f, 1.0f,
+            /* Comp       on,pos,thr,ratio,atk,rel,makeup */ 1.0f, 1.0f, -22.0f, 2.5f, 8.0f, 100.0f, 0.5f,
             /* Wah        on,pos,pedal,q  */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   on,pos,drive,tone,level */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp        pos,drive,bass,mid,treble,vol */ 5.0f, 0.0f, 1.0f, -2.0f, 3.0f, 0.5f,
-            /* Chorus     on,pos,rate,depth,mix */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     on,pos,rate,depth,mix */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    on,pos,rate,depth */ 1.0f, 10.0f, 4.0f, 0.25f,
-            /* Delay      on,pos,time,fb,mix */ 0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     on,pos,room,damp,mix */ 1.0f, 12.0f, 0.3f, 0.6f, 0.18f,
+            /* Amp        pos,drive,bass,mid,treble,vol */ 5.0f, 0.0f, 1.0f, 0.0f, 2.0f, 0.0f,
+            /* Chorus     on,pos,rate,depth,mix */ 0.0f, 13.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     on,pos,rate,depth,mix */ 0.0f, 14.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    on,pos,rate,depth */ 0.0f, 15.0f, 5.0f, 0.5f,
+            /* Delay      on,pos,time,fb,mix */ 0.0f, 16.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     on,pos,room,damp,mix */ 1.0f, 17.0f, 0.25f, 0.6f, 0.15f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    on,pos,mix,level,bypass */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
             /* Input Gain */ 0.0f,
-            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
-               their zero defaults (Free/off/off/"Modern") in every preset */
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type (0 = Modern) */
             0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
-            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
-            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 8.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 9.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
+            /* EQ on,pos,lowFreq,lowGain,midFreq,midGain,highFreq,highGain,bypass */ 0.0f, 18.0f, 100.0f, 0.0f, 800.0f, 0.0f, 3000.0f, 0.0f, 0.0f,
+            /* Amp Presence */ 2.0f,
+            /* Doubler on,pos,delay,depth,mix,bypass */ 0.0f, 10.0f, 20.0f, 4.0f, 0.4f, 0.0f,
+            /* Harmonizer on,pos,interval,mix,bypass */ 0.0f, 11.0f, 7.0f, 0.4f, 0.0f,
+            /* Exciter on,pos,freq,amount,bypass */ 0.0f, 12.0f, 6000.0f, 0.3f, 0.0f,
         }
     },
 
-    // "British Crunch" - a modest Screamer boost (just enough to push the
-    // amp, barely engaging its own clipper) into a hot, mid-forward Amp
-    // Drive that does the actual saturating - classic cranked-British-stack
-    // rhythm/lead tone, with a touch of room reverb. (Named for the tone,
-    // not a brand - the Amp block is a generic saturator/EQ, not a modeled
-    // Marshall circuit.) Amp Drive is tuned so the tanh saturator still
-    // tracks pick dynamics instead of pinning flat at max the instant a
-    // string is struck - a driveDB much past here starts to just square the
-    // waveform off and swallow the note's natural decay (verified by
-    // measuring output crest factor and decay time against a synthesized
-    // decaying note - see the project's DSP tuning notes).
+    // "Rock Crunch" - a light Screamer boost (its own hard clipper barely
+    // engaging) pushes the Amp's Crunch voicing (-4dB trim - see
+    // AmpBlock.hpp's updateDriveGain()) into an honest mid-gain rhythm/lead
+    // breakup - Drive is 5.0 here specifically to land the *effective*
+    // saturation at this file's originally-verified Modern/Drive=9.0 point
+    // (5.0 - (-4) = 9dB). A tight noise gate and punchy comp keep chords
+    // defined, a short slapback delay plus a bit of room reverb add space
+    // without smearing the attack.
     {
-        "British Crunch",
+        "Rock Crunch",
         {
-            /* Gate       */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp       */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
+            /* Gate       */ 1.0f, 0.0f, -42.0f, 3.0f, 100.0f,
+            /* Comp       */ 1.0f, 1.0f, -20.0f, 3.5f, 8.0f, 120.0f, 1.5f,
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer   */ 1.0f, 3.0f, 1.5f, 0.6f, 1.0f,
-            /* Amp        */ 5.0f, 9.0f, 2.0f, 3.0f, 1.5f, 0.0f,
-            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 1.0f, 12.0f, 0.4f, 0.5f, 0.15f,
+            /* Screamer   */ 1.0f, 3.0f, 1.4f, 0.55f, 1.0f,
+            /* Amp        */ 5.0f, 5.0f, 2.0f, 2.5f, 1.5f, 0.0f,
+            /* Chorus     */ 0.0f, 13.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 14.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 15.0f, 5.0f, 0.5f,
+            /* Delay      */ 1.0f, 16.0f, 300.0f, 0.25f, 0.15f,
+            /* Reverb     */ 1.0f, 17.0f, 0.4f, 0.5f, 0.18f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 40.0f,
             /* Input Gain */ 0.0f,
-            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
-               their zero defaults (Free/off/off/"Modern") in every preset */
-            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type (2 = Crunch) */
+            0.0f, 0.0f, 0.0f, 0.0f, 2.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
-            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
-            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 8.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 9.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
+            /* EQ on,pos,lowFreq,lowGain,midFreq,midGain,highFreq,highGain,bypass */ 0.0f, 18.0f, 100.0f, 0.0f, 800.0f, 0.0f, 3000.0f, 0.0f, 0.0f,
+            /* Amp Presence */ 2.5f,
+            /* Doubler on,pos,delay,depth,mix,bypass */ 0.0f, 10.0f, 20.0f, 4.0f, 0.4f, 0.0f,
+            /* Harmonizer on,pos,interval,mix,bypass */ 0.0f, 11.0f, 7.0f, 0.4f, 0.0f,
+            /* Exciter on,pos,freq,amount,bypass */ 0.0f, 12.0f, 6000.0f, 0.3f, 0.0f,
         }
     },
 
-    // "Shredder Lead" - the Screamer is dialed back to a light boost
-    // (its own hard clipper barely engages) so the *Amp's* smooth tanh
-    // saturation - not a squared-off pedal waveform - is what actually
-    // shapes the tone; that's what makes a lead sing/sustain instead of
-    // buzzing apart under fast picking or tapping. A sustain-friendly
-    // compressor evens out pick attack, boosted mid keeps it cutting
-    // through, and a tamed slapback delay + reverb tail sits it in the
-    // mix without smearing fast runs. Amp Drive is tuned the same way as
-    // British Crunch above - hot enough to sing, not so hot the tanh
-    // stage pins flat and chokes the decay.
+    // "Heavy Distortion" - Distortion is the *only* gain stage (Screamer
+    // stays off entirely - stacking two hard clippers just flattens the
+    // wave into fizz rather than adding character, see this file's
+    // gain-staging note above), on the Hi-Gain voicing (-8dB trim - see
+    // AmpBlock.hpp's updateDriveGain()) with Amp Drive left low (0.0, so
+    // effective saturation into the tanh is 8dB - Distortion is already
+    // doing the heavy lifting, the Amp stage just adds a touch of its own
+    // asymmetric compression on top). A tight, fast noise gate and a deep
+    // mid scoop with a rolled-off treble keep palm-muted chugs tight
+    // instead of fizzy; dry (no delay/reverb) so nothing softens the
+    // attack.
     {
-        "Shredder Lead",
+        "Heavy Distortion",
         {
-            /* Gate       */ 1.0f, 0.0f, -45.0f, 2.0f, 100.0f,
-            /* Comp       */ 1.0f, 1.0f, -24.0f, 3.0f, 5.0f, 150.0f, 2.0f,
-            /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer   */ 1.0f, 3.0f, 1.3f, 0.6f, 1.5f,
-            /* Amp        */ 5.0f, 9.0f, 2.0f, 4.0f, 1.5f, 0.0f,
-            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 11.0f, 350.0f, 0.2f, 0.18f,
-            /* Reverb     */ 1.0f, 12.0f, 0.5f, 0.45f, 0.2f,
-            /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
-            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
-            /* Gate Range */ 40.0f,
-            /* Input Gain */ 0.0f,
-            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
-               their zero defaults (Free/off/off/"Modern") in every preset */
-            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
-            /* Amp on,bypass */                                1.0f, 0.0f,
-            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
-            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
-        }
-    },
-
-    // "Metal Rhythm" - tight noise gate, Distortion as the *only* gain
-    // stage (Screamer stays off entirely here rather than "barely on" -
-    // stacking it with Distortion measured no differently than a single
-    // stage doing the same job, just with more places for gain-staging to
-    // go wrong), a deeper mid scoop and rolled-off treble to keep it tight
-    // instead of fizzy, no time-based effects (keeps palm-muted chugs
-    // tight). Distortion's own hard clip thresholds are much tighter than
-    // Screamer's, so its Drive lives on a much smaller scale - a value
-    // that reads as "light" on Screamer would still slam Distortion into a
-    // fully squared-off wall.
-    {
-        "Metal Rhythm",
-        {
-            /* Gate       */ 1.0f, 0.0f, -40.0f, 1.0f, 60.0f,
+            /* Gate       */ 1.0f, 0.0f, -38.0f, 1.0f, 60.0f,
             /* Comp       */ 0.0f, 1.0f, -18.0f, 4.0f, 10.0f, 100.0f, 0.0f,
             /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
             /* Screamer   */ 0.0f, 3.0f, 1.2f, 0.4f, 0.0f,
-            /* Amp        */ 5.0f, 6.0f, 2.0f, -3.0f, 0.0f, 1.0f,
-            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 0.0f, 12.0f, 0.5f, 0.5f, 0.3f,
+            /* Amp        */ 5.0f, 0.0f, 2.0f, -4.0f, 0.0f, 0.0f,
+            /* Chorus     */ 0.0f, 13.0f, 1.0f, 5.0f, 0.5f,
+            /* Phaser     */ 0.0f, 14.0f, 0.5f, 0.7f, 0.5f,
+            /* Tremolo    */ 0.0f, 15.0f, 5.0f, 0.5f,
+            /* Delay      */ 0.0f, 16.0f, 300.0f, 0.3f, 0.3f,
+            /* Reverb     */ 0.0f, 17.0f, 0.5f, 0.5f, 0.3f,
             /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
             /* Distortion on,pos,drive,tone,level,bypass */ 1.0f, 4.0f, 2.5f, 0.3f, -1.0f, 0.0f,
             /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
             /* Gate Range */ 60.0f,
             /* Input Gain */ 0.0f,
-            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
-               their zero defaults (Free/off/off/"Modern") in every preset */
-            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
+            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type (3 = Hi-Gain) */
+            0.0f, 0.0f, 0.0f, 0.0f, 3.0f,
             /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
             /* Amp on,bypass */                                1.0f, 0.0f,
-            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
-            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
-        }
-    },
-
-    // "Ambient Shoegaze" - clean-ish amp with a light mid scoop for
-    // space, compressor for even sustain, chorus + phaser stacked for a
-    // wide, swirling texture, long delay and a big, dark reverb tail.
-    {
-        "Ambient Shoegaze",
-        {
-            /* Gate       */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp       */ 1.0f, 1.0f, -24.0f, 3.0f, 15.0f, 200.0f, 2.0f,
-            /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer   */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp        */ 5.0f, 6.0f, 1.5f, -2.0f, 1.5f, 0.0f,
-            /* Chorus     */ 1.0f, 8.0f, 0.4f, 8.0f, 0.6f,
-            /* Phaser     */ 1.0f, 9.0f, 0.2f, 0.5f, 0.3f,
-            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 11.0f, 500.0f, 0.45f, 0.35f,
-            /* Reverb     */ 1.0f, 12.0f, 0.85f, 0.3f, 0.5f,
-            /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
-            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
-            /* Gate Range */ 40.0f,
-            /* Input Gain */ 0.0f,
-            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
-               their zero defaults (Free/off/off/"Modern") in every preset */
-            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
-            /* Amp on,bypass */                                1.0f, 0.0f,
-            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
-            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
-        }
-    },
-
-    // "Funk Clean" - snappy compression for percussive clean playing,
-    // Wah enabled (rock the "Wah Pedal" parameter while playing), Amp
-    // Drive kept near unity for a genuinely clean, bright tone, subtle
-    // room reverb only.
-    {
-        "Funk Clean",
-        {
-            /* Gate       */ 0.0f, 0.0f, -50.0f, 5.0f, 150.0f,
-            /* Comp       */ 1.0f, 1.0f, -22.0f, 5.0f, 3.0f, 60.0f, 3.0f,
-            /* Wah        */ 1.0f, 2.0f, 0.5f, 4.5f,
-            /* Screamer   */ 0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
-            /* Amp        */ 5.0f, 1.0f, 0.0f, 1.0f, 3.0f, 0.0f,
-            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
-            /* Delay      */ 0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
-            /* Reverb     */ 1.0f, 12.0f, 0.25f, 0.6f, 0.15f,
-            /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
-            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
-            /* Gate Range */ 40.0f,
-            /* Input Gain */ 0.0f,
-            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
-               their zero defaults (Free/off/off/"Modern") in every preset */
-            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
-            /* Amp on,bypass */                                1.0f, 0.0f,
-            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
-            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
-        }
-    },
-
-    // "Blues Rock Sustain" - the singing, long-sustain blues-rock lead tone
-    // (think Gary Moore's "Parisienne Walkways"): a light Screamer boost
-    // pushes a hot, heavily mid-forward Amp Drive (mid is what makes a
-    // lead "sing" and cut through rather than just distort), a
-    // low-threshold/slow-release Comp keeps notes blooming instead of
-    // decaying, and a plate-style reverb plus a low, subtle delay give it
-    // space without smearing bends and vibrato. No Distortion stage - the
-    // Amp's smooth tanh saturation is what carries the sustain, same
-    // reasoning as "Shredder Lead" above, just tuned for long, vocal notes
-    // instead of fast picking. Amp Drive is intentionally well short of
-    // where the tanh stage would pin flat - a note needs *some* remaining
-    // headroom to actually decay through as it sustains, or the "sustain"
-    // is really just a wall of constant-level buzz that stops dead the
-    // instant the gate closes rather than singing and tapering off.
-    {
-        "Blues Rock Sustain",
-        {
-            /* Gate       */ 1.0f, 0.0f, -45.0f, 3.0f, 120.0f,
-            /* Comp       */ 1.0f, 1.0f, -28.0f, 4.0f, 5.0f, 200.0f, 3.0f,
-            /* Wah        */ 0.0f, 2.0f, 0.5f, 3.0f,
-            /* Screamer   */ 1.0f, 3.0f, 1.3f, 0.55f, 2.0f,
-            /* Amp        */ 5.0f, 9.0f, 3.0f, 3.5f, 1.0f, 0.0f,
-            /* Chorus     */ 0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
-            /* Phaser     */ 0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
-            /* Tremolo    */ 0.0f, 10.0f, 5.0f, 0.5f,
-            /* Delay      */ 1.0f, 11.0f, 380.0f, 0.2f, 0.15f,
-            /* Reverb     */ 1.0f, 12.0f, 0.5f, 0.4f, 0.25f,
-            /* Bypass: gate,comp,wah,screamer,chorus,phaser,tremolo,delay,reverb */ 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* Distortion */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
-            /* Cabinet    */ 0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
-            /* Gate Range */ 45.0f,
-            /* Input Gain */ 0.0f,
-            /* Delay/Tremolo/Chorus sync, Tuner on, Amp Type - all left at
-               their zero defaults (Free/off/off/"Modern") in every preset */
-            0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-            /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
-            /* Amp on,bypass */                                1.0f, 0.0f,
-            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
-            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
+            /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 8.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+            /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 9.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
+            /* EQ on,pos,lowFreq,lowGain,midFreq,midGain,highFreq,highGain,bypass */ 0.0f, 18.0f, 100.0f, 0.0f, 800.0f, 0.0f, 3000.0f, 0.0f, 0.0f,
+            /* Amp Presence */ 1.5f,
+            /* Doubler on,pos,delay,depth,mix,bypass */ 0.0f, 10.0f, 20.0f, 4.0f, 0.4f, 0.0f,
+            /* Harmonizer on,pos,interval,mix,bypass */ 0.0f, 11.0f, 7.0f, 0.4f, 0.0f,
+            /* Exciter on,pos,freq,amount,bypass */ 0.0f, 12.0f, 6000.0f, 0.3f, 0.0f,
         }
     },
 };

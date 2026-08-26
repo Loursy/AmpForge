@@ -63,6 +63,13 @@ public:
         {
             if (slot.block == block)
             {
+                // Coming back from disabled: clear out whatever sample
+                // history the block was left holding (see AudioBlock::
+                // reset()'s comment) before it starts processing audio
+                // again, so a stale delay/reverb tail from however long
+                // ago it was last on can't suddenly reappear now.
+                if (enabled && !slot.enabled)
+                    block->reset();
                 slot.enabled = enabled;
                 return;
             }

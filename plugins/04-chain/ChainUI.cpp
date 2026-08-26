@@ -25,6 +25,7 @@
 #include "ChainPresets.hpp"
 #include "AmpBlock.hpp"
 #include "AutotuneBlock.hpp"
+#include "Biquad.hpp"
 #include <vector>
 #include <string>
 #include <algorithm>
@@ -198,6 +199,10 @@ enum class StompIcon
     Neural,
     Autotune,
     DeEsser,
+    Eq,
+    Doubler,
+    Harmonizer,
+    Exciter,
 };
 
 struct PedalDef
@@ -234,6 +239,12 @@ struct PedalDef
     // section split (see kPaletteRows below). Trailing field, same
     // reasoning as fileLoaderLabel above.
     bool isVocal = false;
+    // When true, the card shows the EQ curve graph (see drawEqCurve())
+    // instead of the generic knob row - a per-band Freq+Gain pair is a
+    // single draggable point on a 2D graph, not two separate 1D knobs,
+    // so it doesn't fit the shared KnobDef shape above at all. Currently
+    // just the EQ pedal. Trailing field, same reasoning as isVocal above.
+    bool hasEqCurve = false;
 };
 
 // clang-format off
@@ -267,31 +278,32 @@ static const PedalDef kPedalDefs[] =
         { "Bass",    kParamAmpBass,   -12.0f, 12.0f,  "dB", 1, false },
         { "Mid",     kParamAmpMid,    -12.0f, 12.0f,  "dB", 1, false },
         { "Treble",  kParamAmpTreble, -12.0f, 12.0f,  "dB", 1, false },
+        { "Presence", kParamAmpPresence, 0.0f, 12.0f, "dB", 1, false },
         { "Volume",  kParamAmpVolume, -24.0f, 12.0f,  "dB", 1, false },
     }, false, nullptr, StompShape::Wide, StompIcon::AmpHead },
-    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, 8, Color(70, 205, 195), {
+    { "Chorus",     kParamChorusOn,   kParamChorusBypass,   kParamChorusPosition, 13, Color(70, 205, 195), {
         { "Rate",    kParamChorusRate,   0.05f, 5.0f,  "Hz", 2, false },
         { "Depth",   kParamChorusDepth,  0.5f, 20.0f,  "ms", 1, false },
         { "Mix",     kParamChorusMix,    0.0f, 1.0f,   "",   0, true },
         { "Sync",    kParamChorusSync,   0.0f, float(kSyncDivisionCount - 1), "", 0, false, true },
     }, false, nullptr, StompShape::Standard, StompIcon::Chorus },
-    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, 9, Color(185, 115, 235), {
+    { "Phaser",     kParamPhaserOn,   kParamPhaserBypass,   kParamPhaserPosition, 14, Color(185, 115, 235), {
         { "Rate",    kParamPhaserRate,  0.05f, 5.0f, "Hz", 2, false },
         { "Depth",   kParamPhaserDepth, 0.0f, 1.0f,  "",   0, true },
         { "Mix",     kParamPhaserMix,   0.0f, 1.0f,  "",   0, true },
     }, false, nullptr, StompShape::HexCut, StompIcon::Phaser },
-    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, 10, Color(235, 205, 60), {
+    { "Tremolo",    kParamTremoloOn,  kParamTremoloBypass,  kParamTremoloPosition, 15, Color(235, 205, 60), {
         { "Rate",    kParamTremoloRate,  0.5f, 15.0f, "Hz", 1, false },
         { "Depth",   kParamTremoloDepth, 0.0f, 1.0f,  "",   0, true },
         { "Sync",    kParamTremoloSync,  0.0f, float(kSyncDivisionCount - 1), "", 0, false, true },
     }, false, nullptr, StompShape::Standard, StompIcon::Tremolo },
-    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  11, Color(95, 225, 145), {
+    { "Delay",      kParamDelayOn,    kParamDelayBypass,    kParamDelayPosition,  16, Color(95, 225, 145), {
         { "Time",     kParamDelayTime,      10.0f, 1500.0f, "ms", 0, false },
         { "Feedback", kParamDelayFeedback,   0.0f, 0.95f,   "",   0, true },
         { "Mix",      kParamDelayMix,        0.0f, 1.0f,    "",   0, true },
         { "Sync",     kParamDelaySync,       0.0f, float(kSyncDivisionCount - 1), "", 0, false, true },
     }, false, nullptr, StompShape::Standard, StompIcon::Delay },
-    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, 12, Color(115, 125, 235), {
+    { "Reverb",     kParamReverbOn,   kParamReverbBypass,   kParamReverbPosition, 17, Color(115, 125, 235), {
         { "Room",     kParamReverbRoomSize, 0.0f, 1.0f, "", 0, true },
         { "Damping",  kParamReverbDamping,  0.0f, 1.0f, "", 0, true },
         { "Mix",      kParamReverbMix,      0.0f, 1.0f, "", 0, true },
@@ -318,19 +330,67 @@ static const PedalDef kPedalDefs[] =
     // reasoning (existing entries' indices stay stable). The only pedal
     // here with isVocal = true - see kPaletteRows below for what that
     // drives in the palette.
-    { "Autotune",   kParamAutotuneOn, kParamAutotuneBypass, kParamAutotunePosition, 13, Color(255, 130, 175), {
+    { "Autotune",   kParamAutotuneOn, kParamAutotuneBypass, kParamAutotunePosition, 8, Color(255, 130, 175), {
         { "Key",     kParamAutotuneKey,   0.0f, 11.0f, "", 0, false, false, false, false, true },
         { "Scale",   kParamAutotuneScale, 0.0f, float(ampforge::kScaleCount - 1), "", 0, false, false, false, true },
         { "Speed",   kParamAutotuneSpeed, 0.0f, 1.0f,  "", 0, true },
     }, false, nullptr, StompShape::Standard, StompIcon::Autotune, "Load File...", true },
-    { "De-esser",   kParamDeEsserOn, kParamDeEsserBypass, kParamDeEsserPosition, 14, Color(120, 200, 220), {
+    { "De-esser",   kParamDeEsserOn, kParamDeEsserBypass, kParamDeEsserPosition, 9, Color(120, 200, 220), {
         { "Freq",      kParamDeEsserFrequency, 1000.0f, 16000.0f, "Hz", 0, false },
         { "Thresh",    kParamDeEsserThreshold,   -60.0f,    0.0f, "dB", 1, false },
         { "Reduction", kParamDeEsserReduction,     0.0f,   24.0f, "dB", 1, false },
     }, false, nullptr, StompShape::Mini, StompIcon::DeEsser, "Load File...", true },
+    // A general-purpose 3-band parametric EQ pedal (core/EqBlock.hpp) -
+    // unlike Amp's own Bass/Mid/Treble tone stack, every band's center
+    // frequency is adjustable here too, not fixed per Amp Type voicing.
+    // Appended at the end like Autotune/De-esser above, same reasoning
+    // (existing entries' indices stay stable). No KnobDef list - each
+    // band is a single draggable point on the EQ curve graph instead (see
+    // hasEqCurve/kEqBands/drawEqCurve()), not six separate knobs.
+    { "EQ",         kParamEqOn, kParamEqBypass, kParamEqPosition, 18, Color(170, 210, 90), {
+    }, false, nullptr, StompShape::Wide, StompIcon::Eq, "Load File...", false, true },
+    // Doubler/Harmonizer/Exciter - three more vocal-oriented blocks,
+    // appended at the end like Autotune/De-esser/EQ above, same reasoning
+    // (existing entries' indices stay stable).
+    { "Doubler",     kParamDoublerOn, kParamDoublerBypass, kParamDoublerPosition, 10, Color(160, 170, 235), {
+        { "Delay", kParamDoublerDelay,  5.0f, 50.0f, "ms", 0, false },
+        { "Depth", kParamDoublerDepth,  0.0f, 15.0f, "ms", 0, false },
+        { "Mix",   kParamDoublerMix,    0.0f, 1.0f,  "",   0, true },
+    }, false, nullptr, StompShape::Standard, StompIcon::Doubler, "Load File...", true },
+    { "Harmonizer",  kParamHarmonizerOn, kParamHarmonizerBypass, kParamHarmonizerPosition, 11, Color(235, 170, 100), {
+        { "Interval", kParamHarmonizerInterval, -12.0f, 12.0f, "st", 0, false },
+        { "Mix",      kParamHarmonizerMix,        0.0f,  1.0f, "",   0, true },
+    }, false, nullptr, StompShape::HexCut, StompIcon::Harmonizer, "Load File...", true },
+    { "Exciter",     kParamExciterOn, kParamExciterBypass, kParamExciterPosition, 12, Color(255, 225, 120), {
+        { "Freq",   kParamExciterFrequency, 1500.0f, 14000.0f, "Hz", 0, false },
+        { "Amount", kParamExciterAmount,       0.0f,     1.0f, "",   0, true },
+    }, false, nullptr, StompShape::Mini, StompIcon::Exciter, "Load File...", true },
 };
 // clang-format on
 static constexpr int kPedalDefCount = sizeof(kPedalDefs) / sizeof(kPedalDefs[0]);
+
+// The EQ pedal's three bands, for the curve graph (see drawEqCurve()) -
+// mirrors core/EqBlock.hpp's own fixed filter type/Q per band exactly, so
+// the curve drawn here is computed from the *same* coefficient formulas
+// the DSP actually runs (core/Biquad.hpp's magnitudeDB()), not just a
+// visual approximation. freqMin/freqMax match kParamEq*Freq's own
+// declared ranges in ChainPlugin.cpp's initParameter().
+struct EqBandDef
+{
+    int freqParam, gainParam;
+    float freqMin, freqMax;
+    ampforge::Biquad::Type type;
+    float q;
+};
+static constexpr float kEqGainRangeDB = 15.0f; // matches kParamEq*Gain's -15..15 range
+static constexpr float kEqGraphMinHz = 20.0f;
+static constexpr float kEqGraphMaxHz = 20000.0f;
+static const EqBandDef kEqBands[3] =
+{
+    { kParamEqLowFreq,  kParamEqLowGain,    40.0f,   500.0f, ampforge::Biquad::Type::LowShelf,  0.707f },
+    { kParamEqMidFreq,  kParamEqMidGain,   200.0f,  5000.0f, ampforge::Biquad::Type::Peak,       1.0f   },
+    { kParamEqHighFreq, kParamEqHighGain, 1000.0f, 12000.0f, ampforge::Biquad::Type::HighShelf,  0.707f },
+};
 
 // Shared with formatKnobValue()'s isAutotuneKey handling and
 // frequencyToNote() (the Tuner overlay) - both need the same 12 semitone
@@ -418,11 +478,11 @@ static const float kBlankPresetValues[kParamCount] =
     /* Wah       on,pos,pedal,q */               0.0f, 2.0f, 0.5f, 3.0f,
     /* Screamer  on,pos,drive,tone,level */      0.0f, 3.0f, 1.0f, 0.5f, 0.0f,
     /* Amp       pos,drive,bass,mid,treble,vol */ 5.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-    /* Chorus    on,pos,rate,depth,mix */        0.0f, 8.0f, 1.0f, 5.0f, 0.5f,
-    /* Phaser    on,pos,rate,depth,mix */        0.0f, 9.0f, 0.5f, 0.7f, 0.5f,
-    /* Tremolo   on,pos,rate,depth */            0.0f, 10.0f, 5.0f, 0.5f,
-    /* Delay     on,pos,time,fb,mix */           0.0f, 11.0f, 300.0f, 0.3f, 0.3f,
-    /* Reverb    on,pos,room,damp,mix */         0.0f, 12.0f, 0.5f, 0.5f, 0.3f,
+    /* Chorus    on,pos,rate,depth,mix */        0.0f, 13.0f, 1.0f, 5.0f, 0.5f,
+    /* Phaser    on,pos,rate,depth,mix */        0.0f, 14.0f, 0.5f, 0.7f, 0.5f,
+    /* Tremolo   on,pos,rate,depth */            0.0f, 15.0f, 5.0f, 0.5f,
+    /* Delay     on,pos,time,fb,mix */           0.0f, 16.0f, 300.0f, 0.3f, 0.3f,
+    /* Reverb    on,pos,room,damp,mix */         0.0f, 17.0f, 0.5f, 0.5f, 0.3f,
     /* Bypass x9 */                              0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
     /* Distortion on,pos,drive,tone,level,bypass */ 0.0f, 4.0f, 4.0f, 0.5f, 0.0f, 0.0f,
     /* Cabinet    on,pos,mix,level,bypass */        0.0f, 6.0f, 1.0f, 0.0f, 0.0f,
@@ -432,8 +492,14 @@ static const float kBlankPresetValues[kParamCount] =
     0.0f, 0.0f, 0.0f, 0.0f, 0.0f,
     /* NAM on,pos,inputTrim,outputLevel,mix,bypass */ 0.0f, 7.0f, 0.0f, 0.0f, 1.0f, 0.0f,
     /* Amp on,bypass */                                1.0f, 0.0f,
-    /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 13.0f, 0.0f, 0.0f, 0.5f, 0.0f,
-    /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 14.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
+    /* Autotune on,pos,key,scale,speed,bypass */       0.0f, 8.0f, 0.0f, 0.0f, 0.5f, 0.0f,
+    /* De-esser on,pos,freq,threshold,reduction,bypass */ 0.0f, 9.0f, 6000.0f, -30.0f, 12.0f, 0.0f,
+    /* EQ on,pos,lowFreq,lowGain,midFreq,midGain,highFreq,highGain,bypass */
+    0.0f, 18.0f, 100.0f, 0.0f, 800.0f, 0.0f, 3000.0f, 0.0f, 0.0f,
+    /* Amp Presence */ 0.0f,
+    /* Doubler on,pos,delay,depth,mix,bypass */ 0.0f, 10.0f, 20.0f, 4.0f, 0.4f, 0.0f,
+    /* Harmonizer on,pos,interval,mix,bypass */ 0.0f, 11.0f, 7.0f, 0.4f, 0.0f,
+    /* Exciter on,pos,freq,amount,bypass */ 0.0f, 12.0f, 6000.0f, 0.3f, 0.0f,
 };
 // clang-format on
 
@@ -447,7 +513,11 @@ class ChainUI : public UI
 {
 public:
     ChainUI()
-        : UI(1000, 720)
+        // Widened from the original 1000 - the Amp card now has 7 knobs
+        // (Type/Drive/Bass/Mid/Treble/Presence/Volume), and at 1000 its
+        // last knob's value chip would spill past rackModuleWidth()'s
+        // right edge, past what onMouse()'s hit-test rect even covers.
+        : UI(1100, 720)
     {
         loadSharedResources();
         std::fill(std::begin(paramValues), std::end(paramValues), 0.0f);
@@ -456,6 +526,8 @@ public:
         std::fill(std::begin(moduleRemoving), std::end(moduleRemoving), false);
         lastFrameTime = std::chrono::steady_clock::now();
         loadCustomPresets();
+        loadFactoryOverrides();
+        loadHiddenFactoryPresets();
     }
 
 protected:
@@ -722,6 +794,13 @@ protected:
                     draggingKnobIndex = -1;
                     repaint();
                 }
+                if (eqDraggingBand >= 0)
+                {
+                    editParameter(kEqBands[eqDraggingBand].freqParam, false);
+                    editParameter(kEqBands[eqDraggingBand].gainParam, false);
+                    eqDraggingBand = -1;
+                    repaint();
+                }
                 if (paletteDraggingPedal >= 0)
                 {
                     finishPaletteDrag(mx, my);
@@ -839,40 +918,70 @@ protected:
                     return true;
                 }
 
-                const float knobCenterY = y + kModuleHeaderH + kKnobCenterYOffset;
-                float knobX = kModuleLeft + 50.0f;
-                for (size_t k = 0; k < def.knobs.size(); ++k)
+                if (def.hasEqCurve)
                 {
-                    // The value readout chip - click it to type an exact value.
-                    const float chipX = knobX - kValueChipW * 0.5f;
-                    const float chipY = knobCenterY + kKnobRadius + kValueChipGap;
-                    if (mx >= chipX && mx <= chipX + kValueChipW && my >= chipY && my <= chipY + kValueChipH)
+                    // Same graph rect drawEqCurve() draws into - see its
+                    // own call in drawModuleCard().
+                    const float gx = kModuleLeft + 16.0f;
+                    const float gy = y + kModuleHeaderH + 6.0f;
+                    const float gw = moduleW - 32.0f;
+                    const float gh = kKnobAreaH - 12.0f;
+                    for (int i = 0; i < 3; ++i)
                     {
-                        startKnobEdit(pedalIndex, static_cast<int>(k));
-                        return true;
+                        const float px = eqFreqToX(paramValues[kEqBands[i].freqParam], gx, gw);
+                        const float py = eqGainToY(paramValues[kEqBands[i].gainParam], gy, gh);
+                        const float dx = mx - px;
+                        const float dy = my - py;
+                        if (dx * dx + dy * dy <= 9.0f * 9.0f)
+                        {
+                            eqDraggingBand = i;
+                            eqDragStartX = mx;
+                            eqDragStartY = my;
+                            eqDragStartFreq = paramValues[kEqBands[i].freqParam];
+                            eqDragStartGainDB = paramValues[kEqBands[i].gainParam];
+                            editParameter(kEqBands[i].freqParam, true);
+                            editParameter(kEqBands[i].gainParam, true);
+                            return true;
+                        }
                     }
-
-                    const float dx = mx - knobX;
-                    const float dy = my - knobCenterY;
-                    if (dx * dx + dy * dy <= kKnobRadius * kKnobRadius)
-                    {
-                        draggingKnobPedal = pedalIndex;
-                        draggingKnobIndex = static_cast<int>(k);
-                        draggingKnobStartY = my;
-                        draggingKnobStartValue = paramValues[def.knobs[k].paramIndex];
-                        editParameter(def.knobs[k].paramIndex, true);
-                        return true;
-                    }
-                    knobX += kKnobSpacing;
                 }
-
-                if (def.hasFileLoader)
+                else
                 {
-                    const float btnY = knobCenterY - kFileLoaderH * 0.5f;
-                    if (mx >= knobX && mx <= knobX + kFileLoaderW && my >= btnY && my <= btnY + kFileLoaderH)
+                    const float knobCenterY = y + kModuleHeaderH + kKnobCenterYOffset;
+                    float knobX = kModuleLeft + 50.0f;
+                    for (size_t k = 0; k < def.knobs.size(); ++k)
                     {
-                        requestStateFile(def.stateKey);
-                        return true;
+                        // The value readout chip - click it to type an exact value.
+                        const float chipX = knobX - kValueChipW * 0.5f;
+                        const float chipY = knobCenterY + kKnobRadius + kValueChipGap;
+                        if (mx >= chipX && mx <= chipX + kValueChipW && my >= chipY && my <= chipY + kValueChipH)
+                        {
+                            startKnobEdit(pedalIndex, static_cast<int>(k));
+                            return true;
+                        }
+
+                        const float dx = mx - knobX;
+                        const float dy = my - knobCenterY;
+                        if (dx * dx + dy * dy <= kKnobRadius * kKnobRadius)
+                        {
+                            draggingKnobPedal = pedalIndex;
+                            draggingKnobIndex = static_cast<int>(k);
+                            draggingKnobStartY = my;
+                            draggingKnobStartValue = paramValues[def.knobs[k].paramIndex];
+                            editParameter(def.knobs[k].paramIndex, true);
+                            return true;
+                        }
+                        knobX += kKnobSpacing;
+                    }
+
+                    if (def.hasFileLoader)
+                    {
+                        const float btnY = knobCenterY - kFileLoaderH * 0.5f;
+                        if (mx >= knobX && mx <= knobX + kFileLoaderW && my >= btnY && my <= btnY + kFileLoaderH)
+                        {
+                            requestStateFile(def.stateKey);
+                            return true;
+                        }
                     }
                 }
 
@@ -926,6 +1035,31 @@ protected:
             return true;
         }
 
+        if (eqDraggingBand >= 0)
+        {
+            const EqBandDef& band = kEqBands[eqDraggingBand];
+            const float gw = rackModuleWidth(getWidth()) - 32.0f;
+            const float gh = kKnobAreaH - 12.0f;
+            const float logRange = std::log10(kEqGraphMaxHz) - std::log10(kEqGraphMinHz);
+
+            const float deltaLog = ((mx - eqDragStartX) / gw) * logRange;
+            float newFreq = std::pow(10.0f, std::log10(eqDragStartFreq) + deltaLog);
+            newFreq = std::max(band.freqMin, std::min(band.freqMax, newFreq));
+
+            const float deltaGain = ((eqDragStartY - my) / gh) * (2.0f * kEqGainRangeDB);
+            float newGain = eqDragStartGainDB + deltaGain;
+            newGain = std::max(-kEqGainRangeDB, std::min(kEqGainRangeDB, newGain));
+
+            setParameterValue(band.freqParam, newFreq);
+            paramValues[band.freqParam] = newFreq;
+            displayValues[band.freqParam] = newFreq;
+            setParameterValue(band.gainParam, newGain);
+            paramValues[band.gainParam] = newGain;
+            displayValues[band.gainParam] = newGain;
+            repaint();
+            return true;
+        }
+
         if (draggingModuleIndex >= 0)
         {
             // The card itself floats and follows the cursor (drawRack()
@@ -966,8 +1100,29 @@ protected:
                 const float newPos = static_cast<float>(i);
                 if (paramValues[posParam] != newPos)
                 {
+                    // The dragged pedal's own position param already has an
+                    // open edit gesture from onMouse's drag-start (and gets
+                    // closed at drag-end) - but every OTHER pedal reflowed
+                    // out of its way here was, until this fix, getting
+                    // setParameterValue() with no editParameter() bracket at
+                    // all. That's outside the begin/end-edit contract hosts
+                    // expect around an automatable parameter change, and at
+                    // least some hosts silently drop or reorder an edit sent
+                    // that way relative to properly-bracketed ones - under a
+                    // fast drag that could leave two pedals' Position
+                    // parameters holding the same value on the DSP side,
+                    // which EffectChain::rebuildOrder()'s std::sort (not a
+                    // stable sort) then breaks the tie between arbitrarily,
+                    // i.e. exactly "reordering pedals scrambles the signal
+                    // chain". Bracket every one of these instant, one-shot
+                    // writes the same way addPedalAtDefaultPosition() below
+                    // already does for its own single position write.
+                    if (others[i] != draggingModuleIndex)
+                        editParameter(posParam, true);
                     setParameterValue(posParam, newPos);
                     paramValues[posParam] = newPos;
+                    if (others[i] != draggingModuleIndex)
+                        editParameter(posParam, false);
                 }
             }
 
@@ -1298,18 +1453,131 @@ private:
         repaint();
     }
 
-    void saveCustomPresetsToFile() const
+    // Shared by saveCustomPresetsToFile() and saveFactoryOverridesToFile()
+    // below - both write the exact same PRESET/name/values/ENDPRESET format
+    // to their own file, just from a different vector.
+    static void writePresetsToFile(const std::string& path, const std::vector<CustomPreset>& presets)
     {
-        std::ofstream f(getPresetsFilePath(), std::ios::trunc);
+        std::ofstream f(path, std::ios::trunc);
         if (!f.is_open())
             return;
-        for (const CustomPreset& p : customPresets)
+        for (const CustomPreset& p : presets)
         {
             f << "PRESET\n" << p.name << "\n";
             for (uint32_t i = 0; i < kParamCount; ++i)
                 f << paramToString(p.values[i]) << "\n";
             f << "ENDPRESET\n";
         }
+    }
+
+    void saveCustomPresetsToFile() const
+    {
+        writePresetsToFile(getPresetsFilePath(), customPresets);
+    }
+
+    // Where an edited factory preset's override values live - see
+    // factoryOverrides' own comment above. Same directory/format as
+    // getPresetsFilePath(), just a separate file so a factory override can
+    // never collide with (or get pruned by logic scoped to) a real custom
+    // preset entry.
+    std::string getFactoryOverridesFilePath() const
+    {
+        const std::string dir = getUserHomeDir() + "/.config/ampforge";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        return dir + "/factory_overrides.txt";
+    }
+
+    void loadFactoryOverrides()
+    {
+        factoryOverrides.clear();
+        std::ifstream f(getFactoryOverridesFilePath());
+        if (!f.is_open())
+            return;
+        parsePresetsFromStream(f, factoryOverrides);
+    }
+
+    void saveFactoryOverridesToFile() const
+    {
+        writePresetsToFile(getFactoryOverridesFilePath(), factoryOverrides);
+    }
+
+    // Where the names a user has "deleted" from the Factory section live -
+    // see hiddenFactoryPresets' own comment above. Just names, one per
+    // line - unlike customPresets/factoryOverrides there are no parameter
+    // values to carry, so this skips the PRESET/ENDPRESET format entirely.
+    std::string getHiddenPresetsFilePath() const
+    {
+        const std::string dir = getUserHomeDir() + "/.config/ampforge";
+        std::error_code ec;
+        std::filesystem::create_directories(dir, ec);
+        return dir + "/hidden_presets.txt";
+    }
+
+    void loadHiddenFactoryPresets()
+    {
+        hiddenFactoryPresets.clear();
+        std::ifstream f(getHiddenPresetsFilePath());
+        if (!f.is_open())
+            return;
+        std::string line;
+        while (std::getline(f, line))
+            if (!line.empty())
+                hiddenFactoryPresets.push_back(line);
+    }
+
+    void saveHiddenFactoryPresetsToFile() const
+    {
+        std::ofstream f(getHiddenPresetsFilePath(), std::ios::trunc);
+        if (!f.is_open())
+            return;
+        for (const std::string& name : hiddenFactoryPresets)
+            f << name << "\n";
+    }
+
+    bool isFactoryPresetOverridden(const std::string& name) const
+    {
+        for (const CustomPreset& o : factoryOverrides)
+            if (o.name == name)
+                return true;
+        return false;
+    }
+
+    bool isFactoryPresetHidden(const std::string& name) const
+    {
+        for (const std::string& hidden : hiddenFactoryPresets)
+            if (hidden == name)
+                return true;
+        return false;
+    }
+
+    // The values a factory row at index i should actually load: an
+    // override if the user has edited-and-saved over it, otherwise the
+    // untouched compiled-in default. Every place that loads a factory
+    // preset by index (the dropdown click handler, host-driven
+    // programLoaded() intentionally excepted - see its own comment) goes
+    // through this instead of reading kPresets[i].values directly.
+    const float* factoryPresetValues(uint32_t i) const
+    {
+        for (const CustomPreset& o : factoryOverrides)
+            if (o.name == kPresets[i].name)
+                return o.values;
+        return kPresets[i].values;
+    }
+
+    // Factory rows the dropdown should actually show, in kPresets order -
+    // skips whatever's in hiddenFactoryPresets. Used by both
+    // handleDropdownClick() and drawPresetDropdown() so the two can't drift
+    // out of sync with each other (they already share this same
+    // row-counting/iteration pattern for customPresets).
+    std::vector<uint32_t> visibleFactoryIndices() const
+    {
+        std::vector<uint32_t> out;
+        out.reserve(kProgramCount);
+        for (uint32_t i = 0; i < kProgramCount; ++i)
+            if (!isFactoryPresetHidden(kPresets[i].name))
+                out.push_back(i);
+        return out;
     }
 
     static std::string paramToString(float v)
@@ -1374,9 +1642,14 @@ private:
 
     // The Save button's actual behavior: if we're already on a saved custom
     // preset, just overwrite it immediately - no dialog, no risk of ending
-    // up with two entries sharing a name. Only prompt for a name when there
-    // isn't an existing custom preset to update (a factory preset or the
-    // blank canvas is active).
+    // up with two entries sharing a name. A factory preset also saves
+    // immediately rather than opening the dialog, but as a same-named
+    // override (see saveFactoryOverride()) instead of overwriting the
+    // compiled-in table - that's what makes "editing" a factory preset
+    // possible at all, and it can't collide with a real custom preset's
+    // name either, same as the compiled-in table itself can't. Only the
+    // blank "Untitled" canvas (or some other name that isn't already a
+    // custom or factory preset) falls through to the naming dialog.
     void handleSaveButtonClick()
     {
         for (CustomPreset& existing : customPresets)
@@ -1391,16 +1664,42 @@ private:
             }
         }
 
+        if (isFactoryPresetName(activePresetName))
+        {
+            saveFactoryOverride(activePresetName);
+            return;
+        }
+
         savingPreset = true;
-        if (activePresetName == "Untitled")
-            nameInputBuffer.clear();
-        else if (isFactoryPresetName(activePresetName))
-            // Pre-filling the bare factory name would just bounce straight
-            // into confirmSavePreset()'s collision guard below on the first
-            // Enter press - suggest a name that's actually savable instead.
-            nameInputBuffer = activePresetName + " copy";
-        else
-            nameInputBuffer = activePresetName;
+        nameInputBuffer = (activePresetName == "Untitled") ? std::string() : activePresetName;
+    }
+
+    // Writes paramValues as a same-named override for factory preset `name`
+    // - see factoryOverrides' own comment. Mirrors handleSaveButtonClick()'s
+    // own "update in place, no dialog" behavior for a custom preset above.
+    void saveFactoryOverride(const std::string& name)
+    {
+        for (CustomPreset& existing : factoryOverrides)
+        {
+            if (existing.name == name)
+            {
+                for (uint32_t i = 0; i < kParamCount; ++i)
+                    existing.values[i] = paramValues[i];
+                sanitizeOutputParams(existing.values);
+                saveFactoryOverridesToFile();
+                triggerSaveToast("Saved changes to \"" + name + "\"");
+                return;
+            }
+        }
+
+        CustomPreset p;
+        p.name = name;
+        for (uint32_t i = 0; i < kParamCount; ++i)
+            p.values[i] = paramValues[i];
+        sanitizeOutputParams(p.values);
+        factoryOverrides.push_back(p);
+        saveFactoryOverridesToFile();
+        triggerSaveToast("Saved changes to \"" + name + "\"");
     }
 
     void deleteActiveCustomPreset()
@@ -1417,6 +1716,50 @@ private:
                 return;
             }
         }
+    }
+
+    // Called for the Delete button when a factory preset - not a custom one
+    // (see deleteActiveCustomPreset() above) - is active. The compiled-in
+    // table itself can never actually lose an entry, so this is a
+    // two-step, fully reversible action instead: on an *edited* factory
+    // preset (has an override), Delete just discards that override,
+    // snapping it back to the exact factory default while leaving the row
+    // itself right where it was; on an already-pristine one, Delete hides
+    // it from this dropdown entirely (see visibleFactoryIndices()),
+    // reversible via the "Restore Hidden" row at the bottom of the Factory
+    // section (see restoreHiddenFactoryPresets()). Nothing here can ever
+    // permanently lose factory content.
+    void deleteActiveFactoryPreset()
+    {
+        const std::string name = activePresetName;
+
+        for (size_t i = 0; i < factoryOverrides.size(); ++i)
+        {
+            if (factoryOverrides[i].name == name)
+            {
+                factoryOverrides.erase(factoryOverrides.begin() + static_cast<long>(i));
+                saveFactoryOverridesToFile();
+                activePresetName = "Untitled";
+                triggerSaveToast("Reverted \"" + name + "\" to its factory default");
+                return;
+            }
+        }
+
+        hiddenFactoryPresets.push_back(name);
+        saveHiddenFactoryPresetsToFile();
+        activePresetName = "Untitled";
+        triggerSaveToast("Removed \"" + name + "\" - see Restore Hidden in the Factory list");
+    }
+
+    void restoreHiddenFactoryPresets()
+    {
+        const size_t n = hiddenFactoryPresets.size();
+        if (n == 0)
+            return;
+        hiddenFactoryPresets.clear();
+        saveHiddenFactoryPresetsToFile();
+        triggerSaveToast(n == 1 ? "Restored 1 hidden preset" : ("Restored " + std::to_string(n) + " hidden presets"));
+        repaint();
     }
 
     void confirmSavePreset()
@@ -1601,6 +1944,8 @@ private:
         {
             if (isActivePresetCustom())
                 deleteActiveCustomPreset();
+            else if (isFactoryPresetName(activePresetName))
+                deleteActiveFactoryPreset();
             return true;
         }
         x += deleteBtnW + gap;
@@ -1649,8 +1994,10 @@ private:
         const float dropX = 12.0f;
         const float dropY = kTopBarHeight + kControlBarHeight;
         const float dropW = 220.0f;
+        const std::vector<uint32_t> visibleFactory = visibleFactoryIndices();
+        const uint32_t restoreRow = hiddenFactoryPresets.empty() ? 0 : 1;
         const uint32_t customRows = customPresets.empty() ? 0 : static_cast<uint32_t>(1 + customPresets.size());
-        const float dropH = kDropdownRowH * (1 + kProgramCount + customRows);
+        const float dropH = kDropdownRowH * (1 + static_cast<uint32_t>(visibleFactory.size()) + restoreRow + customRows);
 
         // Bounding box check on both axes - previously only X was checked,
         // so any click below the dropdown but still under its X range (e.g.
@@ -1661,14 +2008,24 @@ private:
             return false;
 
         float rowY = dropY + kDropdownRowH; // skip "Factory" header row
-        for (uint32_t i = 0; i < kProgramCount; ++i)
+        for (uint32_t i : visibleFactory)
         {
             if (my >= rowY && my < rowY + kDropdownRowH)
             {
                 resetABCompare();
-                applyValuesArray(kPresets[i].values);
+                applyValuesArray(factoryPresetValues(i));
                 activePresetName = kPresets[i].name;
                 presetDropdownOpen = false;
+                return true;
+            }
+            rowY += kDropdownRowH;
+        }
+
+        if (!hiddenFactoryPresets.empty())
+        {
+            if (my >= rowY && my < rowY + kDropdownRowH)
+            {
+                restoreHiddenFactoryPresets();
                 return true;
             }
             rowY += kDropdownRowH;
@@ -1820,12 +2177,56 @@ private:
         setParameterValue(onParam, 1.0f);
         paramValues[onParam] = 1.0f;
 
-        const int posParam = kPedalDefs[pedalIndex].positionParam;
-        const float newPos = static_cast<float>(kPedalDefs[pedalIndex].defaultPosition);
-        editParameter(posParam, true);
-        setParameterValue(posParam, newPos);
-        paramValues[posParam] = newPos;
-        editParameter(posParam, false);
+        // Insert this pedal into the CURRENT active order at the rank its
+        // defaultPosition (a fixed "recommended signal chain" constant -
+        // see kPaletteRows's comment above) gives it among the pedals
+        // already on, then reflow everyone to dense, unique position
+        // values - the same scheme the live drag-and-drop reflow in
+        // onMouse() uses. Just writing defaultPosition straight into this
+        // pedal's Position param (the old behavior) could land it on the
+        // exact same value an already-active pedal now occupies:
+        // defaultPosition is a fixed 0-18 constant, but drag-and-drop
+        // compacts active pedals into a dense 0..N-1 range, so once
+        // that's happened, an untouched pedal's own default number often
+        // falls right inside it. That tie is exactly what
+        // EffectChain::rebuildOrder()'s std::sort (not a stable sort)
+        // then broke arbitrarily - i.e. adding a pedal back after
+        // reordering the rack could scramble the signal chain.
+        std::vector<int> active;
+        for (int i = 0; i < kPedalDefCount; ++i)
+        {
+            const int otherOnParam = kPedalDefs[i].onParam;
+            if (i != pedalIndex && (otherOnParam < 0 || paramValues[otherOnParam] > 0.5f))
+                active.push_back(i);
+        }
+        std::sort(active.begin(), active.end(), [this](int a, int b)
+        {
+            return paramValues[kPedalDefs[a].positionParam] < paramValues[kPedalDefs[b].positionParam];
+        });
+
+        size_t insertAt = active.size();
+        for (size_t i = 0; i < active.size(); ++i)
+        {
+            if (kPedalDefs[pedalIndex].defaultPosition < kPedalDefs[active[i]].defaultPosition)
+            {
+                insertAt = i;
+                break;
+            }
+        }
+        active.insert(active.begin() + insertAt, pedalIndex);
+
+        for (size_t i = 0; i < active.size(); ++i)
+        {
+            const int posParam = kPedalDefs[active[i]].positionParam;
+            const float newPos = static_cast<float>(i);
+            if (paramValues[posParam] != newPos)
+            {
+                editParameter(posParam, true);
+                setParameterValue(posParam, newPos);
+                paramValues[posParam] = newPos;
+                editParameter(posParam, false);
+            }
+        }
 
         moduleAlpha[pedalIndex] = 0.0f; // animate it fading/sliding in
     }
@@ -1837,8 +2238,18 @@ private:
         const float posA = paramValues[posParamA];
         const float posB = paramValues[posParamB];
 
+        // See the drag-reflow loop's comment above for why these need an
+        // editParameter() bracket, same as every other parameter write in
+        // this file - a setParameterValue() sent outside a begin/end-edit
+        // gesture is what let two pedals end up sharing one Position value
+        // on the DSP side, which EffectChain::rebuildOrder()'s std::sort
+        // then breaks ties on arbitrarily.
+        editParameter(posParamA, true);
         setParameterValue(posParamA, posB);
+        editParameter(posParamA, false);
+        editParameter(posParamB, true);
         setParameterValue(posParamB, posA);
+        editParameter(posParamB, false);
         paramValues[posParamA] = posB;
         paramValues[posParamB] = posA;
         displayValues[posParamA] = posB;
@@ -2168,9 +2579,11 @@ private:
         drawButton(x, btnY, saveBtnW, btnH, "Save", false);
         x += saveBtnW + gap;
 
-        // Only meaningful for a saved custom preset - dimmed otherwise so it
-        // doesn't invite deleting a factory preset (which isn't possible).
-        const bool canDelete = isActivePresetCustom();
+        // Meaningful for a saved custom preset (deletes it) or an active
+        // factory preset (reverts its override if edited, otherwise hides
+        // it - see deleteActiveFactoryPreset()); dimmed only for the blank
+        // "Untitled" canvas, which has nothing to delete.
+        const bool canDelete = isActivePresetCustom() || isFactoryPresetName(activePresetName);
         drawButton(x, btnY, deleteBtnW, btnH, "Delete", false, canDelete ? 1.0f : 0.35f);
         x += deleteBtnW + gap;
 
@@ -2214,8 +2627,10 @@ private:
         const float dropX = 12.0f;
         const float dropY = kTopBarHeight + kControlBarHeight + (1.0f - dropdownAnim) * -8.0f;
         const float dropW = 220.0f;
+        const std::vector<uint32_t> visibleFactory = visibleFactoryIndices();
+        const uint32_t restoreRow = hiddenFactoryPresets.empty() ? 0 : 1;
         const uint32_t customRows = customPresets.empty() ? 0 : static_cast<uint32_t>(1 + customPresets.size());
-        const float dropH = kDropdownRowH * (1 + kProgramCount + customRows);
+        const float dropH = kDropdownRowH * (1 + static_cast<uint32_t>(visibleFactory.size()) + restoreRow + customRows);
 
         beginPath();
         rect(dropX - 20.0f, dropY - 10.0f, dropW + 40.0f, dropH + 40.0f);
@@ -2244,9 +2659,33 @@ private:
         textLetterSpacing(0.0f);
         rowY += kDropdownRowH;
 
-        for (uint32_t i = 0; i < kProgramCount; ++i)
+        for (uint32_t i : visibleFactory)
         {
-            drawPresetRow(dropX, rowY, dropW, kPresets[i].name, kPresets[i].name == activePresetName);
+            drawPresetRow(dropX, rowY, dropW, kPresets[i].name, kPresets[i].name == activePresetName,
+                          isFactoryPresetOverridden(kPresets[i].name));
+            rowY += kDropdownRowH;
+        }
+
+        if (!hiddenFactoryPresets.empty())
+        {
+            // Not a preset row - drawPresetRow() assumes an active/inactive
+            // toggle state and a click that loads a preset, neither of which
+            // applies here, so this gets its own small block instead.
+            const bool isHovered = (lastMouseX >= dropX && lastMouseX < dropX + dropW &&
+                                     lastMouseY >= rowY && lastMouseY < rowY + kDropdownRowH);
+            if (isHovered)
+            {
+                beginPath();
+                rect(dropX, rowY, dropW, kDropdownRowH);
+                fillColor(Color(255, 255, 255, 0.07f));
+                fill();
+                closePath();
+            }
+            fontSize(12.0f);
+            fillColor(kColorButtonAccent);
+            textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
+            const std::string restoreLabel = "Restore Hidden (" + std::to_string(hiddenFactoryPresets.size()) + ")";
+            text(dropX + 14.0f, rowY + kDropdownRowH * 0.5f, restoreLabel.c_str(), nullptr);
             rowY += kDropdownRowH;
         }
 
@@ -2285,7 +2724,7 @@ private:
         restore(); // matches the globalAlpha save()
     }
 
-    void drawPresetRow(float rowX, float rowY, float rowW, const char* name, bool isActive)
+    void drawPresetRow(float rowX, float rowY, float rowW, const char* name, bool isActive, bool showModifiedDot = false)
     {
         const bool isHovered = (lastMouseX >= rowX && lastMouseX < rowX + rowW &&
                                  lastMouseY >= rowY && lastMouseY < rowY + kDropdownRowH);
@@ -2319,6 +2758,19 @@ private:
         fillColor(isActive ? kColorTextDark : kColorTextPrimary);
         textAlign(ALIGN_LEFT | ALIGN_MIDDLE);
         text(rowX + 14.0f, rowY + kDropdownRowH * 0.5f, name, nullptr);
+
+        if (showModifiedDot)
+        {
+            // Marks a factory preset with a saved override (see
+            // factoryOverrides/saveFactoryOverride()) - distinguishes "this
+            // row plays back what you edited and saved" from "this row
+            // plays back the untouched factory default".
+            beginPath();
+            circle(rowX + rowW - 16.0f, rowY + kDropdownRowH * 0.5f, 3.0f);
+            fillColor(isActive ? kColorTextDark.withAlpha(0.6f) : kColorButtonAccent);
+            fill();
+            closePath();
+        }
     }
 
     void drawSaveModal(float width, float height)
@@ -3490,9 +3942,454 @@ private:
             closePath();
             break;
         }
+        case StompIcon::Eq:
+        {
+            // Three graphic-EQ slider tracks (the classic "volume fader"
+            // look) with the knob dot sitting at a different height on
+            // each - low/mid/high, reading as an EQ at a glance the same
+            // way Compressor's two uneven meter bars do above.
+            const float dx[3]  = { -6.0f, 0.0f, 6.0f };
+            const float dot[3] = { 2.0f, -3.0f, 4.0f }; // low boosted, mid cut, high boosted
+            for (int i = 0; i < 3; ++i)
+            {
+                beginPath();
+                moveTo(cx + dx[i], cy - 7.0f);
+                lineTo(cx + dx[i], cy + 7.0f);
+                stroke();
+                closePath();
+                beginPath();
+                circle(cx + dx[i], cy + dot[i], 1.8f);
+                fill();
+                closePath();
+            }
+            break;
+        }
+        case StompIcon::Doubler:
+        {
+            // Two overlapping circles (a Venn-diagram "two voices layered
+            // into one" read) - distinct from Chorus's two offset sine
+            // waves above, since a doubler isn't a modulation effect the
+            // way chorus/phaser/tremolo are, it's literally a second copy.
+            beginPath();
+            circle(cx - 3.0f, cy, 6.0f);
+            stroke();
+            closePath();
+            beginPath();
+            circle(cx + 3.0f, cy, 6.0f);
+            stroke();
+            closePath();
+            break;
+        }
+        case StompIcon::Harmonizer:
+        {
+            // Two stacked musical notes (a chord/harmony), simplified to
+            // filled note-heads with stems - reads as "harmony" at a
+            // glance among the other, more waveform-oriented icons.
+            for (const float dx : { -4.0f, 3.0f })
+            {
+                const float noteY = (dx < 0.0f) ? cy + 3.0f : cy - 1.0f;
+                beginPath();
+                circle(cx + dx, noteY, 2.2f);
+                fill();
+                closePath();
+                beginPath();
+                moveTo(cx + dx + 2.0f, noteY - 0.5f);
+                lineTo(cx + dx + 2.0f, noteY - 8.0f);
+                stroke();
+                closePath();
+            }
+            break;
+        }
+        case StompIcon::Exciter:
+        {
+            // A sparkle/star-burst - radiating lines from a center point,
+            // the classic "shine/brightness" visual shorthand, for an
+            // effect that's literally adding sparkle to the top end.
+            for (int i = 0; i < 8; ++i)
+            {
+                const float ang = static_cast<float>(i) * static_cast<float>(M_PI) / 4.0f;
+                const float r0 = 2.5f, r1 = (i % 2 == 0) ? 8.0f : 5.5f;
+                beginPath();
+                moveTo(cx + std::cos(ang) * r0, cy + std::sin(ang) * r0);
+                lineTo(cx + std::cos(ang) * r1, cy + std::sin(ang) * r1);
+                stroke();
+                closePath();
+            }
+            break;
+        }
         case StompIcon::None:
         default:
             break;
+        }
+    }
+
+    // Amp Type visual identity - see kAmpVoicings (core/AmpBlock.hpp) for
+    // the sonic side of each voicing. Modern keeps the card's original
+    // look (Wide utility-box, cool blue, flat rack-head icon) so nothing
+    // changes for anyone who's never touched the Type knob; Vintage/
+    // Crunch/Hi-Gain each get their own accent color + card silhouette +
+    // badge icon so switching Amp Type actually reads as swapping in a
+    // *different pedal*, not just relabeling one knob - the same
+    // "distinct enclosure" language StompShape already gives every other
+    // pedal type in kPedalDefs, just driven by a live parameter instead
+    // of a fixed table entry. Applied in drawModuleCard() below, wherever
+    // it would otherwise read def.accent/def.shape/def.icon for the Amp
+    // card specifically (identified by StompIcon::AmpHead).
+    static Color ampAccentForType(int ampType)
+    {
+        switch (ampType)
+        {
+        case 1: return Color(205, 155, 90);  // Vintage - warm tweed/amber
+        case 2: return Color(215, 65, 50);   // Crunch - British stack red
+        case 3: return Color(150, 70, 225);  // Hi-Gain - aggressive violet
+        case 0:
+        default: return Color(90, 170, 255); // Modern - original cool blue
+        }
+    }
+
+    static StompShape ampShapeForType(int ampType)
+    {
+        switch (ampType)
+        {
+        case 1: return StompShape::Standard; // Vintage - rounded combo corners
+        case 2: return StompShape::Angled;   // Crunch - wedge-topped half-stack
+        case 3: return StompShape::HexCut;   // Hi-Gain - chamfered boutique/spiky
+        case 0:
+        default: return StompShape::Wide;    // Modern - original utility-box head
+        }
+    }
+
+    // The actual "different pedal" cue for Amp Type - a distinct surface
+    // texture/trim covering the card's knob area (not just its accent
+    // color or corner-cut silhouette, which read as a subtle skin rather
+    // than a different enclosure). Drawn once, behind the knobs, clipped
+    // to the knob-area rect (below the header, inset a little so it can't
+    // bleed past HexCut/Angled's own corner chamfers). Modeled after real
+    // amp/cab surface finishes: tweed cloth weave, a checkered British
+    // grille with piping, a brushed/diagonal-cut boutique panel.
+    void drawAmpCardTexture(float x, float y, float w, float h, int ampType, const Color& accent, float alpha)
+    {
+        save();
+        intersectScissor(x, y, w, h);
+
+        switch (ampType)
+        {
+        case 1: // Vintage - woven tweed-cloth crosshatch, warm and soft
+        {
+            strokeWidth(1.0f);
+            strokeColor(Color(60, 40, 15, 0.12f * alpha));
+            const float step = 9.0f;
+            for (float d = -h; d < w + h; d += step)
+            {
+                beginPath();
+                moveTo(x + d, y);
+                lineTo(x + d - h, y + h);
+                stroke();
+                closePath();
+                beginPath();
+                moveTo(x + d, y);
+                lineTo(x + d + h, y + h);
+                stroke();
+                closePath();
+            }
+            break;
+        }
+        case 2: // Crunch - perforated British grille cloth + gold piping trim
+        {
+            fillColor(Color(0, 0, 0, 0.16f * alpha));
+            const float step = 10.0f;
+            for (float yy = y + 6.0f; yy < y + h - 6.0f; yy += step)
+            {
+                for (float xx = x + 6.0f; xx < x + w - 6.0f; xx += step)
+                {
+                    beginPath();
+                    circle(xx, yy, 1.1f);
+                    fill();
+                    closePath();
+                }
+            }
+            strokeWidth(1.5f);
+            strokeColor(Color(225, 195, 120, 0.4f * alpha));
+            beginPath();
+            roundedRect(x + 6.0f, y + 6.0f, w - 12.0f, h - 12.0f, 4.0f);
+            stroke();
+            closePath();
+            break;
+        }
+        case 3: // Hi-Gain - tight diagonal brushed panel + a sharp accent slash
+        {
+            strokeWidth(0.75f);
+            strokeColor(Color(0, 0, 0, 0.22f * alpha));
+            const float step = 5.0f;
+            for (float d = -h; d < w + h; d += step)
+            {
+                beginPath();
+                moveTo(x + d, y);
+                lineTo(x + d + h, y + h);
+                stroke();
+                closePath();
+            }
+            strokeWidth(2.0f);
+            strokeColor(accent.withAlpha(0.55f * alpha));
+            beginPath();
+            moveTo(x + w - 46.0f, y);
+            lineTo(x + w, y + 30.0f);
+            stroke();
+            closePath();
+            break;
+        }
+        case 0:
+        default: // Modern - faint rackmount vent slits, tucked in a corner
+        {
+            strokeWidth(1.2f);
+            strokeColor(Color(255, 255, 255, 0.07f * alpha));
+            for (int i = 0; i < 5; ++i)
+            {
+                const float yy = y + h - 16.0f + i * 3.0f;
+                beginPath();
+                moveTo(x + w - 50.0f, yy);
+                lineTo(x + w - 10.0f, yy);
+                stroke();
+                closePath();
+            }
+            break;
+        }
+        }
+
+        restore();
+    }
+
+    // Per-Amp-Type badge icon, drawn instead of StompIcon::AmpHead's usual
+    // fixed glyph (see drawStompIcon() above) - same idea as
+    // ampAccentForType()/ampShapeForType() just above, driven by the live
+    // Amp Type parameter rather than a fixed StompIcon.
+    void drawAmpHeadIcon(float cx, float cy, int ampType, const Color& color, float alpha)
+    {
+        strokeColor(color.withAlpha(alpha));
+        fillColor(color.withAlpha(alpha));
+        strokeWidth(1.4f);
+
+        switch (ampType)
+        {
+        case 1: // Vintage - round-cornered combo, one big center knob, tweed-cloth lines
+        {
+            beginPath();
+            roundedRect(cx - 8.0f, cy - 5.0f, 16.0f, 10.0f, 4.0f);
+            stroke();
+            closePath();
+            beginPath();
+            circle(cx, cy - 1.0f, 2.2f);
+            stroke();
+            closePath();
+            for (float dy : { 2.5f, 4.0f })
+            {
+                beginPath();
+                moveTo(cx - 6.0f, cy + dy);
+                lineTo(cx + 6.0f, cy + dy);
+                stroke();
+                closePath();
+            }
+            break;
+        }
+        case 2: // Crunch - angled British half-stack wedge, piping + 2 knobs
+        {
+            beginPath();
+            moveTo(cx - 8.0f, cy + 5.0f);
+            lineTo(cx - 6.0f, cy - 5.0f);
+            lineTo(cx + 6.0f, cy - 5.0f);
+            lineTo(cx + 8.0f, cy + 5.0f);
+            closePath();
+            stroke();
+            beginPath();
+            moveTo(cx - 6.5f, cy - 1.5f);
+            lineTo(cx + 6.5f, cy - 1.5f);
+            stroke();
+            closePath();
+            beginPath();
+            circle(cx - 3.0f, cy + 1.5f, 1.2f);
+            circle(cx + 3.0f, cy + 1.5f, 1.2f);
+            fill();
+            closePath();
+            break;
+        }
+        case 3: // Hi-Gain - spiked crown over a narrow body, aggressive
+        {
+            beginPath();
+            roundedRect(cx - 8.0f, cy - 1.0f, 16.0f, 8.0f, 1.0f);
+            stroke();
+            closePath();
+            beginPath();
+            moveTo(cx - 8.0f, cy - 1.0f);
+            lineTo(cx - 5.0f, cy - 7.0f);
+            lineTo(cx - 2.0f, cy - 1.0f);
+            lineTo(cx + 1.0f, cy - 7.0f);
+            lineTo(cx + 4.0f, cy - 1.0f);
+            lineTo(cx + 8.0f, cy - 7.0f);
+            stroke();
+            closePath();
+            beginPath();
+            circle(cx - 3.0f, cy + 3.0f, 1.1f);
+            circle(cx + 3.0f, cy + 3.0f, 1.1f);
+            fill();
+            closePath();
+            break;
+        }
+        case 0:
+        default: // Modern - the card's original flat utility-box head
+        {
+            beginPath();
+            roundedRect(cx - 8.0f, cy - 5.0f, 16.0f, 10.0f, 1.5f);
+            stroke();
+            closePath();
+            beginPath();
+            moveTo(cx - 8.0f, cy);
+            lineTo(cx + 8.0f, cy);
+            stroke();
+            closePath();
+            beginPath();
+            circle(cx - 3.0f, cy - 2.5f, 1.3f);
+            circle(cx + 3.0f, cy - 2.5f, 1.3f);
+            fill();
+            closePath();
+            break;
+        }
+        }
+    }
+
+    // x position on the EQ curve graph for a given frequency (log-mapped
+    // across kEqGraphMinHz..kEqGraphMaxHz) - shared by drawEqCurve() and
+    // onMouse()/onMotion()'s hit-testing/dragging so they can't drift
+    // apart, same reasoning as rackModuleWidth().
+    static float eqFreqToX(float freq, float x, float w)
+    {
+        const float t = (std::log10(freq) - std::log10(kEqGraphMinHz)) /
+                         (std::log10(kEqGraphMaxHz) - std::log10(kEqGraphMinHz));
+        return x + std::clamp(t, 0.0f, 1.0f) * w;
+    }
+
+    // y position on the EQ curve graph for a given gain in dB (linear
+    // across -kEqGainRangeDB..+kEqGainRangeDB) - same sharing reasoning
+    // as eqFreqToX() above.
+    static float eqGainToY(float gainDB, float y, float h)
+    {
+        const float t = (gainDB + kEqGainRangeDB) / (2.0f * kEqGainRangeDB);
+        return y + h * (1.0f - std::clamp(t, 0.0f, 1.0f));
+    }
+
+    // The EQ pedal's curve graph - a log-frequency/dB response plot (like
+    // a real parametric EQ plugin) with one draggable point per band,
+    // replacing the generic knob row entirely for this one pedal (see
+    // hasEqCurve). The curve is the actual combined magnitude response of
+    // the three live Biquads (core/Biquad.hpp's magnitudeDB(), summed in
+    // dB since the bands run in series), not a visual approximation - it
+    // moves in lock-step with what the DSP is really doing.
+    void drawEqCurve(float x, float y, float w, float h, float alpha)
+    {
+        ampforge::Biquad bands[3];
+        for (int i = 0; i < 3; ++i)
+        {
+            bands[i].setSampleRate(getSampleRate());
+            bands[i].setParams(kEqBands[i].type, paramValues[kEqBands[i].freqParam],
+                                paramValues[kEqBands[i].gainParam], kEqBands[i].q);
+        }
+
+        beginPath();
+        rect(x, y, w, h);
+        fillColor(Color(0, 0, 0, 0.25f * alpha));
+        fill();
+        closePath();
+
+        // A few sparse gridlines - full axis labels don't fit this card's
+        // height, so just enough to read roughly where a band sits.
+        for (const float f : { 100.0f, 1000.0f, 10000.0f })
+        {
+            const float gx = eqFreqToX(f, x, w);
+            beginPath();
+            moveTo(gx, y);
+            lineTo(gx, y + h);
+            strokeWidth(1.0f);
+            strokeColor(Color(255, 255, 255, 0.06f * alpha));
+            stroke();
+            closePath();
+        }
+        const float zeroY = eqGainToY(0.0f, y, h);
+        beginPath();
+        moveTo(x, zeroY);
+        lineTo(x + w, zeroY);
+        strokeWidth(1.0f);
+        strokeColor(Color(255, 255, 255, 0.12f * alpha));
+        stroke();
+        closePath();
+
+        static constexpr int kCurveSteps = 48;
+        float curveX[kCurveSteps + 1];
+        float curveY[kCurveSteps + 1];
+        for (int i = 0; i <= kCurveSteps; ++i)
+        {
+            const float t = static_cast<float>(i) / kCurveSteps;
+            const float freq = kEqGraphMinHz * std::pow(kEqGraphMaxHz / kEqGraphMinHz, t);
+            float totalDB = 0.0f;
+            for (const auto& band : bands)
+                totalDB += band.magnitudeDB(freq);
+            curveX[i] = x + t * w;
+            curveY[i] = eqGainToY(totalDB, y, h);
+        }
+
+        // Filled from the curve down to 0dB (like a real EQ plugin) so
+        // boosts/cuts read as "more/less area" at a glance, not just a
+        // squiggly line - a separate path from the outline below (its
+        // extra baseline-closing segments shouldn't be stroked).
+        beginPath();
+        moveTo(curveX[0], curveY[0]);
+        for (int i = 1; i <= kCurveSteps; ++i)
+            lineTo(curveX[i], curveY[i]);
+        lineTo(x + w, zeroY);
+        lineTo(x, zeroY);
+        closePath();
+        fillPaint(linearGradient(x, y, x, y + h,
+                                  Color(170, 210, 90, 0.35f * alpha), Color(170, 210, 90, 0.05f * alpha)));
+        fill();
+
+        beginPath();
+        moveTo(curveX[0], curveY[0]);
+        for (int i = 1; i <= kCurveSteps; ++i)
+            lineTo(curveX[i], curveY[i]);
+        strokeWidth(2.0f);
+        strokeColor(Color(190, 225, 130, alpha));
+        stroke();
+        closePath();
+
+        beginPath();
+        rect(x, y, w, h);
+        strokeWidth(1.0f);
+        strokeColor(Color(255, 255, 255, 0.1f * alpha));
+        stroke();
+        closePath();
+
+        // One draggable point per band, grown slightly while it's the one
+        // being dragged.
+        for (int i = 0; i < 3; ++i)
+        {
+            const float px = eqFreqToX(paramValues[kEqBands[i].freqParam], x, w);
+            const float py = eqGainToY(paramValues[kEqBands[i].gainParam], y, h);
+            const float r = (eqDraggingBand == i) ? 7.0f : 5.5f;
+
+            beginPath();
+            circle(px, py, r + 1.5f);
+            fillColor(Color(0, 0, 0, 0.4f * alpha));
+            fill();
+            closePath();
+            beginPath();
+            circle(px, py, r);
+            fillColor(Color(230, 240, 210, alpha));
+            fill();
+            closePath();
+            beginPath();
+            circle(px, py, r);
+            strokeWidth(1.0f);
+            strokeColor(Color(90, 110, 40, alpha));
+            stroke();
+            closePath();
         }
     }
 
@@ -3502,6 +4399,15 @@ private:
     void drawModuleCard(int pedalIndex, float y, float moduleW)
     {
             const PedalDef& def = kPedalDefs[pedalIndex];
+            // Amp's card visuals (accent/shape/icon) come from its live
+            // Type parameter instead of def's fixed fields when this is
+            // the Amp card - see ampAccentForType()'s comment above.
+            const bool isAmpCard = (def.icon == StompIcon::AmpHead);
+            const int ampTypeForCard = isAmpCard
+                ? std::clamp(static_cast<int>(std::round(displayValues[kParamAmpType])), 0, ampforge::kAmpVoicingCount - 1)
+                : 0;
+            const Color baseAccent = isAmpCard ? ampAccentForType(ampTypeForCard) : def.accent;
+            const StompShape effectiveShape = isAmpCard ? ampShapeForType(ampTypeForCard) : def.shape;
             const float moduleH = kPedalCardH;
             const bool isDraggingThis = (pedalIndex == draggingModuleIndex);
             const bool isBypassed = (def.bypassParam >= 0) && (paramValues[def.bypassParam] > 0.5f);
@@ -3513,7 +4419,7 @@ private:
             // stomp box with its LED dark) and the knob area dims slightly,
             // rather than the whole card fading into a washed-out ghost of
             // itself. Much clearer at a glance than a flat opacity cut.
-            const Color cardAccent = isBypassed ? def.accent.asGrayscale() : def.accent;
+            const Color cardAccent = isBypassed ? baseAccent.asGrayscale() : baseAccent;
             const float knobAlpha = isBypassed ? alpha * 0.72f : alpha;
 
             // Drop shadow, for a bit of depth against the rack background -
@@ -3534,23 +4440,36 @@ private:
             // Body - a subtle brushed-metal gradient rather than a flat
             // fill, shaped per def.shape (see stompboxOutline()'s comment).
             beginPath();
-            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, def.shape);
+            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, effectiveShape);
             fillPaint(linearGradient(kModuleLeft, drawY, kModuleLeft, drawY + moduleH,
                                       Color(kColorPanel, Color(255, 255, 255), 0.05f).withAlpha(alpha),
                                       Color(kColorPanel, Color(0, 0, 0), 0.2f).withAlpha(alpha)));
             fill();
             closePath();
             beginPath();
-            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, def.shape);
+            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, effectiveShape);
             strokeWidth(1.0f);
             strokeColor(Color(255, 255, 255, 0.07f * alpha));
             stroke();
             closePath();
 
+            // Amp's per-Type surface texture (tweed/grille/brushed-panel -
+            // see drawAmpCardTexture()'s comment) - covers the knob area
+            // only, inset from the header and from the card's own edges so
+            // it can't bleed past HexCut/Angled's corner chamfers. Drawn
+            // after the base body fill/stroke above but before the knobs
+            // below, so it reads as the card's own surface, not an overlay.
+            if (isAmpCard)
+            {
+                drawAmpCardTexture(kModuleLeft + 6.0f, drawY + kModuleHeaderH + 2.0f,
+                                    moduleW - 12.0f, moduleH - kModuleHeaderH - 18.0f,
+                                    ampTypeForCard, cardAccent, alpha);
+            }
+
             if (isDraggingThis)
             {
                 beginPath();
-                stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, def.shape);
+                stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, effectiveShape);
                 strokeColor(cardAccent.withAlpha(alpha));
                 strokeWidth(2.5f);
                 stroke();
@@ -3581,7 +4500,7 @@ private:
             save();
             intersectScissor(kModuleLeft, drawY, moduleW, kModuleHeaderH);
             beginPath();
-            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, def.shape);
+            stompboxOutline(kModuleLeft, drawY, moduleW, moduleH, effectiveShape);
             fillPaint(headerGrad);
             fill();
             closePath();
@@ -3597,7 +4516,10 @@ private:
             // Icon badge - unique per effect type, sits where the old
             // header toggle switch used to (that's now the footswitch at
             // the card's bottom instead - see below).
-            drawStompIcon(kModuleLeft + 24.0f, drawY + kModuleHeaderH * 0.5f, def.icon, kColorTextDark, alpha);
+            if (isAmpCard)
+                drawAmpHeadIcon(kModuleLeft + 24.0f, drawY + kModuleHeaderH * 0.5f, ampTypeForCard, kColorTextDark, alpha);
+            else
+                drawStompIcon(kModuleLeft + 24.0f, drawY + kModuleHeaderH * 0.5f, def.icon, kColorTextDark, alpha);
 
             fontSize(16.0f);
             fillColor(kColorTextDark.withAlpha(alpha));
@@ -3643,19 +4565,27 @@ private:
                 drawHeaderToggle(toggleX + kHeaderToggleW * 0.5f, drawY + kModuleHeaderH * 0.5f,
                                   !isBypassed, alpha);
             }
-            const float knobCenterY = drawY + kModuleHeaderH + kKnobCenterYOffset;
-            float knobX = kModuleLeft + 50.0f;
-            for (size_t k = 0; k < def.knobs.size(); ++k)
+            if (def.hasEqCurve)
             {
-                const KnobDef& knob = def.knobs[k];
-                const bool isDraggingKnob = (pedalIndex == draggingKnobPedal && static_cast<int>(k) == draggingKnobIndex);
-                const bool isEditingKnob = (pedalIndex == editingKnobPedal && static_cast<int>(k) == editingKnobIndex);
-                drawKnob(knobX, knobCenterY, knob, displayValues[knob.paramIndex], cardAccent, knobAlpha, isDraggingKnob, isEditingKnob);
-                knobX += kKnobSpacing;
+                drawEqCurve(kModuleLeft + 16.0f, drawY + kModuleHeaderH + 6.0f,
+                            moduleW - 32.0f, kKnobAreaH - 12.0f, knobAlpha);
             }
+            else
+            {
+                const float knobCenterY = drawY + kModuleHeaderH + kKnobCenterYOffset;
+                float knobX = kModuleLeft + 50.0f;
+                for (size_t k = 0; k < def.knobs.size(); ++k)
+                {
+                    const KnobDef& knob = def.knobs[k];
+                    const bool isDraggingKnob = (pedalIndex == draggingKnobPedal && static_cast<int>(k) == draggingKnobIndex);
+                    const bool isEditingKnob = (pedalIndex == editingKnobPedal && static_cast<int>(k) == editingKnobIndex);
+                    drawKnob(knobX, knobCenterY, knob, displayValues[knob.paramIndex], cardAccent, knobAlpha, isDraggingKnob, isEditingKnob);
+                    knobX += kKnobSpacing;
+                }
 
-            if (def.hasFileLoader)
-                drawFileLoaderButton(knobX, knobCenterY, def, knobAlpha);
+                if (def.hasFileLoader)
+                    drawFileLoaderButton(knobX, knobCenterY, def, knobAlpha);
+            }
     }
 
     // Shortens `s` with a trailing "..." so it renders no wider than
@@ -3876,6 +4806,15 @@ private:
     float draggingKnobStartY = 0.0f;
     float draggingKnobStartValue = 0.0f;
 
+    // Which EQ band (0/1/2 into kEqBands, -1 = none) is currently being
+    // dragged on the EQ curve graph - see drawEqCurve()/onMouse()/
+    // onMotion(). Relative-delta dragging, same convention as the knobs
+    // above (not the point jumping to snap under the cursor), just across
+    // two axes (Freq log-mapped, Gain linear) instead of one.
+    int eqDraggingBand = -1;
+    float eqDragStartX = 0.0f, eqDragStartY = 0.0f;
+    float eqDragStartFreq = 0.0f, eqDragStartGainDB = 0.0f;
+
     int editingKnobPedal = -1;
     int editingKnobIndex = -1;
     std::string knobEditBuffer;
@@ -3893,7 +4832,7 @@ private:
 
     bool presetDropdownOpen = false;
     float dropdownAnim = 0.0f;
-    std::string activePresetName = "Chimey Clean";
+    std::string activePresetName = "Pristine Clean";
 
     bool savingPreset = false;
     std::string nameInputBuffer;
@@ -3902,6 +4841,19 @@ private:
     std::string saveToastText;
 
     std::vector<CustomPreset> customPresets;
+
+    // Lets a factory preset (kPresets, compiled-in and otherwise read-only)
+    // be "edited" and "deleted" from this UI without touching the binary:
+    // factoryOverrides holds same-named replacement values that
+    // factoryPresetValues() checks first whenever a factory row is loaded
+    // (see saveFactoryOverride()/deleteActiveFactoryPreset() below), and
+    // hiddenFactoryPresets holds names hidden from the dropdown entirely
+    // (see visibleFactoryIndices()) - both persisted the same way
+    // customPresets is, and both fully reversible (an override can be
+    // reverted, a hidden name restored), since the factory data itself
+    // never actually goes anywhere.
+    std::vector<CustomPreset> factoryOverrides;
+    std::vector<std::string> hiddenFactoryPresets;
 
     // A/B comparison - two full parameter snapshots (plus which preset name
     // each is under, below) the user can flip between instantly (see
@@ -3917,8 +4869,8 @@ private:
     // one activePresetName regardless of which slot is actually active.
     // Kept correct by switchABSlot(), which captures the current
     // activePresetName into the slot being left on every switch.
-    std::string abPresetNameA = "Chimey Clean";
-    std::string abPresetNameB = "Chimey Clean";
+    std::string abPresetNameA = "Pristine Clean";
+    std::string abPresetNameB = "Pristine Clean";
 
     // Local mirror of DPF State key/value pairs (currently just the
     // Cabinet block's loaded IR path), kept in sync via stateChanged().
