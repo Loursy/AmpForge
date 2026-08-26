@@ -12,8 +12,15 @@
  *      tube/transistor "softly" clips the signal when overdriven. tanh(x)
  *      behaves close to x for small values (clean sound) and approaches
  *      -1/+1 for large values (distortion/overdrive feel).
- *   2) Tone stack: three biquad filters in order, Bass -> Mid -> Treble.
+ *   2) Tone stack: four biquad filters in order, Bass -> Mid -> Treble ->
+ *      Presence.
  *   3) Volume: final output level.
+ *
+ * Presence models a real amp's negative-feedback high-frequency boost: a
+ * high-shelf sitting *above* Treble's own frequency, adding "bite"/edge
+ * without re-doing what Treble already covers. Unlike Bass/Mid/Treble it's
+ * boost-only (0 to +dB, no cut) - real Presence pots work the same way,
+ * and there's nothing to "cut" here that Treble doesn't already reach.
  *
  * Amp Type (see kAmpVoicings below) picks between a handful of voicings -
  * different Bass/Mid/Treble center frequencies and Q, a per-type headroom
@@ -36,6 +43,7 @@ struct AmpVoicing
     float bassFreq, bassQ;
     float midFreq, midQ;
     float trebleFreq, trebleQ;
+    float presenceFreq, presenceQ; // see Presence's comment above - always above trebleFreq
     float driveTrimDB; // extra headroom (+) or extra heat (-) before the user's own Drive knob
     float asymmetry;   // 0 = symmetric tanh; >0 = softer negative half (even-harmonic "tube" warmth)
 };
@@ -43,14 +51,16 @@ struct AmpVoicing
 // Index 0 ("Modern") reproduces AmpBlock's original fixed behavior
 // exactly (same centers/Q, zero trim, zero asymmetry) - it's the default,
 // so every preset/session saved before Amp Type existed still sounds
-// identical.
+// identical. presenceFreq/Q were added later (alongside the Presence
+// knob itself) with Presence's gain defaulting to 0dB everywhere, so this
+// still holds for every preset/session saved before Presence existed too.
 static constexpr int kAmpVoicingCount = 4;
 static constexpr AmpVoicing kAmpVoicings[kAmpVoicingCount] =
 {
-    { "Modern",  120.0f, 0.707f, 800.0f, 1.0f, 3000.0f, 0.707f,  0.0f, 0.00f },
-    { "Vintage", 100.0f, 0.707f, 500.0f, 0.9f, 4500.0f, 0.707f,  6.0f, 0.18f },
-    { "Crunch",  150.0f, 0.707f, 900.0f, 1.3f, 2500.0f, 0.707f, -4.0f, 0.25f },
-    { "Hi-Gain",  90.0f, 0.707f, 600.0f, 0.8f, 3500.0f, 0.707f, -8.0f, 0.08f },
+    { "Modern",  120.0f, 0.707f, 800.0f, 1.0f, 3000.0f, 0.707f, 5000.0f, 0.7f,  0.0f, 0.00f },
+    { "Vintage", 100.0f, 0.707f, 500.0f, 0.9f, 4500.0f, 0.707f, 4000.0f, 0.6f,  6.0f, 0.18f },
+    { "Crunch",  150.0f, 0.707f, 900.0f, 1.3f, 2500.0f, 0.707f, 5500.0f, 0.7f, -4.0f, 0.25f },
+    { "Hi-Gain",  90.0f, 0.707f, 600.0f, 0.8f, 3500.0f, 0.707f, 6500.0f, 0.8f, -8.0f, 0.08f },
 };
 
 class AmpBlock : public AudioBlock
@@ -61,17 +71,19 @@ public:
         bass.setSampleRate(sr);
         mid.setSampleRate(sr);
         treble.setSampleRate(sr);
+        presence.setSampleRate(sr);
         updateToneStack();
     }
 
     const char* getName() const override { return "Amp"; }
 
     // --- Parameter setters: called by the DPF plugin wrapper ---
-    void setDriveDB(float db)   { driveDB = db; updateDriveGain(); }
-    void setBassDB(float db)    { bassDB = db;   updateToneStack(); }
-    void setMidDB(float db)     { midDB = db;    updateToneStack(); }
-    void setTrebleDB(float db)  { trebleDB = db; updateToneStack(); }
-    void setVolumeDB(float db)  { volumeLinear = std::pow(10.0f, db / 20.0f); }
+    void setDriveDB(float db)    { driveDB = db; updateDriveGain(); }
+    void setBassDB(float db)     { bassDB = db;   updateToneStack(); }
+    void setMidDB(float db)      { midDB = db;    updateToneStack(); }
+    void setTrebleDB(float db)   { trebleDB = db; updateToneStack(); }
+    void setPresenceDB(float db) { presenceDB = db; updateToneStack(); }
+    void setVolumeDB(float db)   { volumeLinear = std::pow(10.0f, db / 20.0f); }
 
     void setAmpType(int type)
     {
@@ -90,6 +102,7 @@ public:
         x = bass.process(x);
         x = mid.process(x);
         x = treble.process(x);
+        x = presence.process(x);
 
         // 3) Output level
         return x * volumeLinear;
@@ -109,7 +122,15 @@ private:
 
     void updateDriveGain()
     {
-        driveGainLinear = std::pow(10.0f, (driveDB + kAmpVoicings[ampTypeIndex].driveTrimDB) / 20.0f);
+        // Subtracted, not added: driveTrimDB's own comment defines positive
+        // as "extra headroom" (the same Drive setting should clip *less*)
+        // and negative as "extra heat" (clips *more*) - Vintage's +6 needs
+        // to actually take 6dB of effective gain away for that to hold, not
+        // add it. Getting this backwards would make "Hi-Gain" (-8) the
+        // cleanest voicing of the four and "Vintage" (+6) the hottest -
+        // exactly backwards from what those names promise a player picking
+        // between them.
+        driveGainLinear = std::pow(10.0f, (driveDB - kAmpVoicings[ampTypeIndex].driveTrimDB) / 20.0f);
     }
 
     void updateToneStack()
@@ -119,16 +140,21 @@ private:
         // Mid: peak/bell around the voicing's "body" frequency
         // Treble: shelf the high frequencies up/down
         const AmpVoicing& v = kAmpVoicings[ampTypeIndex];
-        bass.setParams(Biquad::Type::LowShelf,    v.bassFreq,   bassDB,   v.bassQ);
-        mid.setParams(Biquad::Type::Peak,         v.midFreq,    midDB,    v.midQ);
-        treble.setParams(Biquad::Type::HighShelf, v.trebleFreq, trebleDB, v.trebleQ);
+        bass.setParams(Biquad::Type::LowShelf,    v.bassFreq,     bassDB,               v.bassQ);
+        mid.setParams(Biquad::Type::Peak,         v.midFreq,      midDB,                v.midQ);
+        treble.setParams(Biquad::Type::HighShelf, v.trebleFreq,   trebleDB,             v.trebleQ);
+        // std::max: Presence is boost-only (see its comment up top) - a
+        // negative value would just carve a notch just above Treble's own
+        // range instead of doing nothing, which isn't what "0" on a
+        // boost-only knob should mean.
+        presence.setParams(Biquad::Type::HighShelf, v.presenceFreq, std::max(0.0f, presenceDB), v.presenceQ);
     }
 
-    Biquad bass, mid, treble;
+    Biquad bass, mid, treble, presence;
     int ampTypeIndex = 0;
     float driveGainLinear = 1.0f;
     float volumeLinear    = 1.0f;
-    float driveDB = 0.0f, bassDB = 0.0f, midDB = 0.0f, trebleDB = 0.0f;
+    float driveDB = 0.0f, bassDB = 0.0f, midDB = 0.0f, trebleDB = 0.0f, presenceDB = 0.0f;
 };
 
 } // namespace ampforge

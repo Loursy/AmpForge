@@ -252,6 +252,78 @@ enum Parameters
     kParamDeEsserReduction,
     kParamDeEsserBypass,
 
+    // EQ - a 3-band parametric equalizer pedal (core/EqBlock.hpp), distinct
+    // from Amp's built-in Bass/Mid/Treble tone stack (core/AmpBlock.hpp) in
+    // that every band's *center frequency* is its own knob here too, not
+    // fixed per amp voicing - a real sweepable EQ pedal rather than a tone
+    // stack baked into the amp. Low/High are shelving filters, Mid is a
+    // peaking filter (same three filter types Amp's own tone stack already
+    // uses, see core/Biquad.hpp) - only each band's Q is fixed rather than
+    // a knob, same reasoning as De-esser's fixed Q above, keeping this
+    // pedal to 6 knobs instead of 9. Appended at the end like every block
+    // above, so existing parameter indices/presets stay unchanged.
+    kParamEqOn,
+    kParamEqPosition,
+    kParamEqLowFreq,
+    kParamEqLowGain,
+    kParamEqMidFreq,
+    kParamEqMidGain,
+    kParamEqHighFreq,
+    kParamEqHighGain,
+    kParamEqBypass,
+
+    // Amp Presence - a high-shelf sitting above Treble's own frequency,
+    // modeling a real amp's negative-feedback high-frequency boost (see
+    // core/AmpBlock.hpp's comment). Lives on the Amp block itself (like
+    // Bass/Mid/Treble above), not a separate pedal, since it's part of
+    // the amp's own tone stack. Boost-only (0 = off, matching every
+    // preset/session saved before this existed), unlike Bass/Mid/Treble.
+    // Appended at the end like every block above, so existing parameter
+    // indices/presets stay unchanged.
+    kParamAmpPresence,
+
+    // Doubler - Automatic Double Tracking (core/DoublerBlock.hpp), a
+    // second vocal-only block alongside Autotune/De-esser above (though,
+    // like Chorus/Delay/Reverb, nothing stops a guitarist from using it
+    // too). Delay is the base delay time, Depth is how far a filtered-
+    // noise LFO wobbles that delay (see DoublerBlock.hpp's own comment
+    // for why noise, not a clean sine like Chorus). Appended at the end
+    // like every block above, so existing parameter indices/presets stay
+    // unchanged.
+    kParamDoublerOn,
+    kParamDoublerPosition,
+    kParamDoublerDelay,
+    kParamDoublerDepth,
+    kParamDoublerMix,
+    kParamDoublerBypass,
+
+    // Harmonizer - adds a second voice a fixed interval above/below the
+    // input (core/HarmonizerBlock.hpp) - Interval is in semitones (e.g.
+    // +7 = a fifth up). Unlike Autotune, this doesn't track the input's
+    // pitch first; see HarmonizerBlock.hpp's own comment for why a fixed
+    // interval is the deliberate choice here, not a missing feature.
+    // Appended at the end like every block above, so existing parameter
+    // indices/presets stay unchanged.
+    kParamHarmonizerOn,
+    kParamHarmonizerPosition,
+    kParamHarmonizerInterval,
+    kParamHarmonizerMix,
+    kParamHarmonizerBypass,
+
+    // Exciter - a "vocal exciter"/air-band brightness enhancer
+    // (core/ExciterBlock.hpp), the third vocal-oriented block. Frequency
+    // is where the enhanced "air" band starts, Amount is how much of the
+    // newly-generated harmonic content gets layered back on top of the
+    // dry signal (see ExciterBlock.hpp's own comment for why this is
+    // additive, not a dry/wet Mix like every other block here). Appended
+    // at the end like every block above, so existing parameter indices/
+    // presets stay unchanged.
+    kParamExciterOn,
+    kParamExciterPosition,
+    kParamExciterFrequency,
+    kParamExciterAmount,
+    kParamExciterBypass,
+
     // Output-only meters (kParameterIsOutput) - deliberately grouped here,
     // all together at the very end, rather than appended next to the
     // input/feature they each report on (which is where they originally

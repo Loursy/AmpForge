@@ -38,6 +38,10 @@
 #include "WahBlock.hpp"
 #include "AutotuneBlock.hpp"
 #include "DeEsserBlock.hpp"
+#include "EqBlock.hpp"
+#include "DoublerBlock.hpp"
+#include "HarmonizerBlock.hpp"
+#include "ExciterBlock.hpp"
 #include "EffectChain.hpp"
 #include "PitchDetector.hpp"
 #include <cmath>
@@ -100,6 +104,7 @@ public:
         ampBlock.setBassDB(0.0f);
         ampBlock.setMidDB(0.0f);
         ampBlock.setTrebleDB(0.0f);
+        ampBlock.setPresenceDB(0.0f);
         ampBlock.setVolumeDB(0.0f);
 
         chorusBlock.setRateHz(1.0f);
@@ -129,15 +134,50 @@ public:
         deEsserBlock.setThresholdDB(-30.0f);
         deEsserBlock.setReductionDB(12.0f);
 
+        eqBlock.setLowFreq(100.0f);
+        eqBlock.setLowGainDB(0.0f);
+        eqBlock.setMidFreq(800.0f);
+        eqBlock.setMidGainDB(0.0f);
+        eqBlock.setHighFreq(3000.0f);
+        eqBlock.setHighGainDB(0.0f);
+
+        doublerBlock.setDelayMs(20.0f);
+        doublerBlock.setDepthMs(4.0f);
+        doublerBlock.setMix(0.4f);
+
+        harmonizerBlock.setIntervalSemitones(7.0f);
+        harmonizerBlock.setMix(0.4f);
+
+        exciterBlock.setFrequency(6000.0f);
+        exciterBlock.setAmount(0.3f);
+
         // Default pedalboard order:
         // Gate(0) -> Comp(1) -> Wah(2) -> Screamer(3) -> Distortion(4) ->
-        // Amp(5) -> Cabinet(6) -> NAM(7) -> Chorus(8) -> Phaser(9) ->
-        // Tremolo(10) -> Delay(11) -> Reverb(12) -> Autotune(13) ->
-        // De-esser(14). NAM sits right after Cabinet - see
-        // kParamNamPosition's case in initParameter() below for why.
-        // Autotune/De-esser are last since they're the two blocks here
-        // that aren't guitar-oriented at all - see their comments in
-        // ChainParameters.hpp.
+        // Amp(5) -> Cabinet(6) -> NAM(7) -> Autotune(8) -> De-esser(9) ->
+        // Doubler(10) -> Harmonizer(11) -> Exciter(12) -> Chorus(13) ->
+        // Phaser(14) -> Tremolo(15) -> Delay(16) -> Reverb(17) -> EQ(18).
+        // NAM sits right after Cabinet - see kParamNamPosition's case in
+        // initParameter() below for why.
+        //
+        // Autotune/De-esser/Doubler/Harmonizer/Exciter sit *before* the
+        // modulation/time-based block (Chorus..Reverb), not after, even
+        // though they were added to the codebase later - this isn't just
+        // guitar-vs-vocal tidiness, it's a real signal-flow requirement.
+        // Autotune tracks pitch by autocorrelation, which reverb/delay
+        // tails actively confuse (a smeared, reflected copy of the signal
+        // reads as noise to a pitch tracker); Doubler/Harmonizer generate
+        // a second voice *from* the input, so if that input already
+        // carries reverb/delay, the generated voice carries a smeared
+        // copy of it too instead of getting its own clean treatment
+        // before the shared ambience is added once, at the end; Exciter
+        // adding "air" to an already-reverberant blend colors the reverb
+        // tail instead of just brightening the dry voice. None of that
+        // is true for EQ - reshaping frequency content doesn't care what
+        // fed it - so EQ keeps its own original placement, last in the
+        // chain, as a final tone-correction/mastering stage (see its own
+        // comment in ChainParameters.hpp). Every position here is still
+        // just a starting default - the whole rack is freely reorderable
+        // by dragging, this is only about what a fresh instance starts at.
         chain.addBlock(&gateBlock, 0);
         chain.addBlock(&compBlock, 1);
         chain.addBlock(&wahBlock, 2);
@@ -146,13 +186,17 @@ public:
         chain.addBlock(&ampBlock, 5);
         chain.addBlock(&cabinetBlock, 6);
         chain.addBlock(&namBlock, 7);
-        chain.addBlock(&chorusBlock, 8);
-        chain.addBlock(&phaserBlock, 9);
-        chain.addBlock(&tremoloBlock, 10);
-        chain.addBlock(&delayBlock, 11);
-        chain.addBlock(&reverbBlock, 12);
-        chain.addBlock(&autotuneBlock, 13);
-        chain.addBlock(&deEsserBlock, 14);
+        chain.addBlock(&autotuneBlock, 8);
+        chain.addBlock(&deEsserBlock, 9);
+        chain.addBlock(&doublerBlock, 10);
+        chain.addBlock(&harmonizerBlock, 11);
+        chain.addBlock(&exciterBlock, 12);
+        chain.addBlock(&chorusBlock, 13);
+        chain.addBlock(&phaserBlock, 14);
+        chain.addBlock(&tremoloBlock, 15);
+        chain.addBlock(&delayBlock, 16);
+        chain.addBlock(&reverbBlock, 17);
+        chain.addBlock(&eqBlock, 18);
         chain.rebuildOrder();
 
         // Amp starts on and un-bypassed (ampOn=true, ampBypass=false above),
@@ -176,6 +220,10 @@ public:
         chain.setEnabled(&reverbBlock, false);
         chain.setEnabled(&autotuneBlock, false);
         chain.setEnabled(&deEsserBlock, false);
+        chain.setEnabled(&eqBlock, false);
+        chain.setEnabled(&doublerBlock, false);
+        chain.setEnabled(&harmonizerBlock, false);
+        chain.setEnabled(&exciterBlock, false);
 
         // Defensive initialization: some hosts (notably the JACK/PipeWire
         // standalone target) can start processing audio before they call
@@ -200,6 +248,10 @@ public:
         reverbBlock.setSampleRate(initialSampleRate);
         autotuneBlock.setSampleRate(initialSampleRate);
         deEsserBlock.setSampleRate(initialSampleRate);
+        eqBlock.setSampleRate(initialSampleRate);
+        doublerBlock.setSampleRate(initialSampleRate);
+        harmonizerBlock.setSampleRate(initialSampleRate);
+        exciterBlock.setSampleRate(initialSampleRate);
         tunerDetector.setSampleRate(initialSampleRate);
     }
 
@@ -226,7 +278,7 @@ protected:
         case kParamGatePosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Gate Position"; parameter.symbol = "gate_position";
-            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
             break;
         case kParamGateThreshold:
             parameter.name = "Gate Threshold"; parameter.symbol = "gate_threshold"; parameter.unit = "dB";
@@ -266,7 +318,7 @@ protected:
         case kParamCompPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Compressor Position"; parameter.symbol = "comp_position";
-            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 1.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
             break;
         case kParamCompThreshold:
             parameter.name = "Compressor Threshold"; parameter.symbol = "comp_threshold"; parameter.unit = "dB";
@@ -298,7 +350,7 @@ protected:
         case kParamWahPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Wah Chain Position"; parameter.symbol = "wah_chain_position";
-            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 2.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
             break;
         case kParamWahPedal:
             parameter.name = "Wah Pedal"; parameter.symbol = "wah_pedal";
@@ -318,7 +370,7 @@ protected:
         case kParamScreamerPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Screamer Position"; parameter.symbol = "screamer_position";
-            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 3.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
             break;
         case kParamScreamerDrive:
             parameter.name = "Screamer Drive"; parameter.symbol = "screamer_drive"; parameter.unit = "x";
@@ -343,7 +395,7 @@ protected:
         case kParamDistortionPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Distortion Position"; parameter.symbol = "distortion_position";
-            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
             break;
         case kParamDistortionDrive:
             parameter.name = "Distortion Drive"; parameter.symbol = "distortion_drive"; parameter.unit = "x";
@@ -367,7 +419,7 @@ protected:
         case kParamAmpPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Amp Position"; parameter.symbol = "amp_position";
-            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 5.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
             break;
         case kParamAmpDrive:
             parameter.name = "Amp Drive"; parameter.symbol = "amp_drive"; parameter.unit = "dB";
@@ -409,7 +461,7 @@ protected:
         case kParamAutotunePosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Autotune Position"; parameter.symbol = "autotune_position";
-            parameter.ranges.def = 13.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
             break;
         case kParamAutotuneKey:
             parameter.hints |= kParameterIsInteger;
@@ -440,7 +492,7 @@ protected:
         case kParamDeEsserPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "De-esser Position"; parameter.symbol = "deesser_position";
-            parameter.ranges.def = 14.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
             break;
         case kParamDeEsserFrequency:
             parameter.name = "De-esser Frequency"; parameter.symbol = "deesser_frequency"; parameter.unit = "Hz";
@@ -460,6 +512,136 @@ protected:
             parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
             break;
 
+        // --- EQ (a 3-band parametric equalizer pedal, distinct from Amp's
+        // own fixed-frequency Bass/Mid/Treble tone stack - see
+        // core/EqBlock.hpp) ---
+        case kParamEqOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "EQ On"; parameter.symbol = "eq_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamEqPosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "EQ Position"; parameter.symbol = "eq_position";
+            parameter.ranges.def = 18.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
+            break;
+        case kParamEqLowFreq:
+            parameter.name = "EQ Low Freq"; parameter.symbol = "eq_low_freq"; parameter.unit = "Hz";
+            parameter.ranges.def = 100.0f; parameter.ranges.min = 40.0f; parameter.ranges.max = 500.0f;
+            break;
+        case kParamEqLowGain:
+            parameter.name = "EQ Low Gain"; parameter.symbol = "eq_low_gain"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = -15.0f; parameter.ranges.max = 15.0f;
+            break;
+        case kParamEqMidFreq:
+            parameter.name = "EQ Mid Freq"; parameter.symbol = "eq_mid_freq"; parameter.unit = "Hz";
+            parameter.ranges.def = 800.0f; parameter.ranges.min = 200.0f; parameter.ranges.max = 5000.0f;
+            break;
+        case kParamEqMidGain:
+            parameter.name = "EQ Mid Gain"; parameter.symbol = "eq_mid_gain"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = -15.0f; parameter.ranges.max = 15.0f;
+            break;
+        case kParamEqHighFreq:
+            parameter.name = "EQ High Freq"; parameter.symbol = "eq_high_freq"; parameter.unit = "Hz";
+            parameter.ranges.def = 3000.0f; parameter.ranges.min = 1000.0f; parameter.ranges.max = 12000.0f;
+            break;
+        case kParamEqHighGain:
+            parameter.name = "EQ High Gain"; parameter.symbol = "eq_high_gain"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = -15.0f; parameter.ranges.max = 15.0f;
+            break;
+        case kParamEqBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "EQ Bypass"; parameter.symbol = "eq_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
+        // --- Amp Presence (see core/AmpBlock.hpp's comment) ---
+        case kParamAmpPresence:
+            parameter.name = "Amp Presence"; parameter.symbol = "amp_presence"; parameter.unit = "dB";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 12.0f;
+            break;
+
+        // --- Doubler (Automatic Double Tracking - see core/DoublerBlock.hpp) ---
+        case kParamDoublerOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Doubler On"; parameter.symbol = "doubler_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamDoublerPosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Doubler Position"; parameter.symbol = "doubler_position";
+            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
+            break;
+        case kParamDoublerDelay:
+            parameter.name = "Doubler Delay"; parameter.symbol = "doubler_delay"; parameter.unit = "ms";
+            parameter.ranges.def = 20.0f; parameter.ranges.min = 5.0f; parameter.ranges.max = 50.0f;
+            break;
+        case kParamDoublerDepth:
+            parameter.name = "Doubler Depth"; parameter.symbol = "doubler_depth"; parameter.unit = "ms";
+            parameter.ranges.def = 4.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
+            break;
+        case kParamDoublerMix:
+            parameter.name = "Doubler Mix"; parameter.symbol = "doubler_mix";
+            parameter.ranges.def = 0.4f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamDoublerBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Doubler Bypass"; parameter.symbol = "doubler_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
+        // --- Harmonizer (fixed-interval harmony voice - see
+        // core/HarmonizerBlock.hpp) ---
+        case kParamHarmonizerOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Harmonizer On"; parameter.symbol = "harmonizer_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamHarmonizerPosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Harmonizer Position"; parameter.symbol = "harmonizer_position";
+            parameter.ranges.def = 11.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
+            break;
+        case kParamHarmonizerInterval:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Harmonizer Interval"; parameter.symbol = "harmonizer_interval"; parameter.unit = "st";
+            parameter.ranges.def = 7.0f; parameter.ranges.min = -12.0f; parameter.ranges.max = 12.0f;
+            break;
+        case kParamHarmonizerMix:
+            parameter.name = "Harmonizer Mix"; parameter.symbol = "harmonizer_mix";
+            parameter.ranges.def = 0.4f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamHarmonizerBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Harmonizer Bypass"; parameter.symbol = "harmonizer_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
+        // --- Exciter (vocal air-band enhancer - see core/ExciterBlock.hpp) ---
+        case kParamExciterOn:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Exciter On"; parameter.symbol = "exciter_on";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamExciterPosition:
+            parameter.hints |= kParameterIsInteger;
+            parameter.name = "Exciter Position"; parameter.symbol = "exciter_position";
+            parameter.ranges.def = 12.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
+            break;
+        case kParamExciterFrequency:
+            parameter.name = "Exciter Frequency"; parameter.symbol = "exciter_frequency"; parameter.unit = "Hz";
+            parameter.ranges.def = 6000.0f; parameter.ranges.min = 1500.0f; parameter.ranges.max = 14000.0f;
+            break;
+        case kParamExciterAmount:
+            parameter.name = "Exciter Amount"; parameter.symbol = "exciter_amount";
+            parameter.ranges.def = 0.3f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+        case kParamExciterBypass:
+            parameter.hints |= kParameterIsBoolean;
+            parameter.name = "Exciter Bypass"; parameter.symbol = "exciter_bypass";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 1.0f;
+            break;
+
         // --- Cabinet (convolves with a loaded speaker-cab impulse
         // response - see core/CabinetBlock.hpp. The IR file path itself
         // is DPF State, not a parameter; see initState() below) ---
@@ -471,7 +653,7 @@ protected:
         case kParamCabinetPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Cabinet Position"; parameter.symbol = "cabinet_position";
-            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 6.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
             break;
         case kParamCabinetMix:
             parameter.name = "Cabinet Mix"; parameter.symbol = "cabinet_mix";
@@ -496,7 +678,7 @@ protected:
         case kParamChorusPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Chorus Position"; parameter.symbol = "chorus_position";
-            parameter.ranges.def = 8.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 13.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
             break;
         case kParamChorusRate:
             parameter.name = "Chorus Rate"; parameter.symbol = "chorus_rate"; parameter.unit = "Hz";
@@ -520,7 +702,7 @@ protected:
         case kParamPhaserPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Phaser Position"; parameter.symbol = "phaser_position";
-            parameter.ranges.def = 9.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 14.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
             break;
         case kParamPhaserRate:
             parameter.name = "Phaser Rate"; parameter.symbol = "phaser_rate"; parameter.unit = "Hz";
@@ -544,7 +726,7 @@ protected:
         case kParamTremoloPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Tremolo Position"; parameter.symbol = "tremolo_position";
-            parameter.ranges.def = 10.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 15.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
             break;
         case kParamTremoloRate:
             parameter.name = "Tremolo Rate"; parameter.symbol = "tremolo_rate"; parameter.unit = "Hz";
@@ -564,7 +746,7 @@ protected:
         case kParamDelayPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Delay Position"; parameter.symbol = "delay_position";
-            parameter.ranges.def = 11.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 16.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
             break;
         case kParamDelayTime:
             parameter.name = "Delay Time"; parameter.symbol = "delay_time"; parameter.unit = "ms";
@@ -588,7 +770,7 @@ protected:
         case kParamReverbPosition:
             parameter.hints |= kParameterIsInteger;
             parameter.name = "Reverb Position"; parameter.symbol = "reverb_position";
-            parameter.ranges.def = 12.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 17.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 18.0f;
             break;
         case kParamReverbRoomSize:
             parameter.name = "Reverb Room Size"; parameter.symbol = "reverb_room_size";
@@ -722,7 +904,7 @@ protected:
             // real fix is this renumbering, which gives every block from
             // Gate(0) through Reverb(12) - 13 blocks total including NAM -
             // its own unique slot again.)
-            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 14.0f;
+            parameter.ranges.def = 7.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 15.0f;
             break;
         case kParamNamInputTrim:
             parameter.name = "NAM Input Trim"; parameter.symbol = "nam_input_trim"; parameter.unit = "dB";
@@ -806,6 +988,37 @@ protected:
         case kParamDeEsserThreshold: return deEsserThreshold;
         case kParamDeEsserReduction: return deEsserReduction;
         case kParamDeEsserBypass:    return deEsserBypass ? 1.0f : 0.0f;
+
+        case kParamEqOn:          return eqOn ? 1.0f : 0.0f;
+        case kParamEqPosition:    return eqPosition;
+        case kParamEqLowFreq:     return eqLowFreq;
+        case kParamEqLowGain:     return eqLowGain;
+        case kParamEqMidFreq:     return eqMidFreq;
+        case kParamEqMidGain:     return eqMidGain;
+        case kParamEqHighFreq:    return eqHighFreq;
+        case kParamEqHighGain:    return eqHighGain;
+        case kParamEqBypass:      return eqBypass ? 1.0f : 0.0f;
+
+        case kParamAmpPresence:   return ampPresence;
+
+        case kParamDoublerOn:       return doublerOn ? 1.0f : 0.0f;
+        case kParamDoublerPosition: return doublerPosition;
+        case kParamDoublerDelay:    return doublerDelay;
+        case kParamDoublerDepth:    return doublerDepth;
+        case kParamDoublerMix:      return doublerMix;
+        case kParamDoublerBypass:   return doublerBypass ? 1.0f : 0.0f;
+
+        case kParamHarmonizerOn:       return harmonizerOn ? 1.0f : 0.0f;
+        case kParamHarmonizerPosition: return harmonizerPosition;
+        case kParamHarmonizerInterval: return harmonizerInterval;
+        case kParamHarmonizerMix:      return harmonizerMix;
+        case kParamHarmonizerBypass:   return harmonizerBypass ? 1.0f : 0.0f;
+
+        case kParamExciterOn:       return exciterOn ? 1.0f : 0.0f;
+        case kParamExciterPosition: return exciterPosition;
+        case kParamExciterFrequency: return exciterFrequency;
+        case kParamExciterAmount:   return exciterAmount;
+        case kParamExciterBypass:   return exciterBypass ? 1.0f : 0.0f;
 
         case kParamCabinetOn:       return cabinetOn ? 1.0f : 0.0f;
         case kParamCabinetPosition: return cabinetPosition;
@@ -987,6 +1200,63 @@ protected:
         case kParamDeEsserBypass:
             deEsserBypass = value > 0.5f; chain.setEnabled(&deEsserBlock, deEsserOn && !deEsserBypass); break;
 
+        case kParamEqOn:
+            eqOn = value > 0.5f; chain.setEnabled(&eqBlock, eqOn && !eqBypass); break;
+        case kParamEqPosition:
+            eqPosition = value; chain.setPosition(&eqBlock, static_cast<int>(std::round(value))); break;
+        case kParamEqLowFreq:
+            eqLowFreq = value; eqBlock.setLowFreq(value); break;
+        case kParamEqLowGain:
+            eqLowGain = value; eqBlock.setLowGainDB(value); break;
+        case kParamEqMidFreq:
+            eqMidFreq = value; eqBlock.setMidFreq(value); break;
+        case kParamEqMidGain:
+            eqMidGain = value; eqBlock.setMidGainDB(value); break;
+        case kParamEqHighFreq:
+            eqHighFreq = value; eqBlock.setHighFreq(value); break;
+        case kParamEqHighGain:
+            eqHighGain = value; eqBlock.setHighGainDB(value); break;
+        case kParamEqBypass:
+            eqBypass = value > 0.5f; chain.setEnabled(&eqBlock, eqOn && !eqBypass); break;
+
+        case kParamAmpPresence:
+            ampPresence = value; ampBlock.setPresenceDB(value); break;
+
+        case kParamDoublerOn:
+            doublerOn = value > 0.5f; chain.setEnabled(&doublerBlock, doublerOn && !doublerBypass); break;
+        case kParamDoublerPosition:
+            doublerPosition = value; chain.setPosition(&doublerBlock, static_cast<int>(std::round(value))); break;
+        case kParamDoublerDelay:
+            doublerDelay = value; doublerBlock.setDelayMs(value); break;
+        case kParamDoublerDepth:
+            doublerDepth = value; doublerBlock.setDepthMs(value); break;
+        case kParamDoublerMix:
+            doublerMix = value; doublerBlock.setMix(value); break;
+        case kParamDoublerBypass:
+            doublerBypass = value > 0.5f; chain.setEnabled(&doublerBlock, doublerOn && !doublerBypass); break;
+
+        case kParamHarmonizerOn:
+            harmonizerOn = value > 0.5f; chain.setEnabled(&harmonizerBlock, harmonizerOn && !harmonizerBypass); break;
+        case kParamHarmonizerPosition:
+            harmonizerPosition = value; chain.setPosition(&harmonizerBlock, static_cast<int>(std::round(value))); break;
+        case kParamHarmonizerInterval:
+            harmonizerInterval = value; harmonizerBlock.setIntervalSemitones(value); break;
+        case kParamHarmonizerMix:
+            harmonizerMix = value; harmonizerBlock.setMix(value); break;
+        case kParamHarmonizerBypass:
+            harmonizerBypass = value > 0.5f; chain.setEnabled(&harmonizerBlock, harmonizerOn && !harmonizerBypass); break;
+
+        case kParamExciterOn:
+            exciterOn = value > 0.5f; chain.setEnabled(&exciterBlock, exciterOn && !exciterBypass); break;
+        case kParamExciterPosition:
+            exciterPosition = value; chain.setPosition(&exciterBlock, static_cast<int>(std::round(value))); break;
+        case kParamExciterFrequency:
+            exciterFrequency = value; exciterBlock.setFrequency(value); break;
+        case kParamExciterAmount:
+            exciterAmount = value; exciterBlock.setAmount(value); break;
+        case kParamExciterBypass:
+            exciterBypass = value > 0.5f; chain.setEnabled(&exciterBlock, exciterOn && !exciterBypass); break;
+
         case kParamCabinetOn:
             cabinetOn = value > 0.5f; chain.setEnabled(&cabinetBlock, cabinetOn && !cabinetBypass); break;
         case kParamCabinetPosition:
@@ -1134,6 +1404,10 @@ protected:
         reverbBlock.setSampleRate(newSampleRate);
         autotuneBlock.setSampleRate(newSampleRate);
         deEsserBlock.setSampleRate(newSampleRate);
+        eqBlock.setSampleRate(newSampleRate);
+        doublerBlock.setSampleRate(newSampleRate);
+        harmonizerBlock.setSampleRate(newSampleRate);
+        exciterBlock.setSampleRate(newSampleRate);
         tunerDetector.setSampleRate(newSampleRate);
 
         // The Cabinet block resamples its IR to whatever sample rate was
@@ -1269,18 +1543,12 @@ protected:
             // (see UI::stateChanged()'s comment for why those two still
             // need the client-side re-read instead), but on LV2/standalone
             // it's exactly the missing notification.
-            d_stderr2("AmpForge: NAM setState('%s') called, instance %p", value, (void*)this);
             if (value[0] != '\0' && namBlock.loadModel(value))
             {
-                d_stderr2("AmpForge: NAM load OK, architecture='%s'", namBlock.getArchitecture().c_str());
                 namModelPath = value;
                 suppressingStatePush = true;
                 updateStateValue(key, value);
                 suppressingStatePush = false;
-            }
-            else if (value[0] != '\0')
-            {
-                d_stderr2("AmpForge: NAM load FAILED, reason='%s'", namBlock.getLastError().c_str());
             }
         }
     }
@@ -1406,6 +1674,10 @@ private:
     ampforge::ReverbBlock reverbBlock;
     ampforge::AutotuneBlock autotuneBlock;
     ampforge::DeEsserBlock deEsserBlock;
+    ampforge::EqBlock eqBlock;
+    ampforge::DoublerBlock doublerBlock;
+    ampforge::HarmonizerBlock harmonizerBlock;
+    ampforge::ExciterBlock exciterBlock;
     ampforge::EffectChain chain;
 
     // Input - applied directly in run(), ahead of the chain, rather than
@@ -1460,6 +1732,7 @@ private:
     // all despite that "always-on" history.
     bool ampOn = true;
     float ampPosition = 5.0f, ampDrive = 0.0f, ampBass = 0.0f, ampMid = 0.0f, ampTreble = 0.0f, ampVolume = 0.0f;
+    float ampPresence = 0.0f;
     float ampType = 0.0f; // index into ampforge::kAmpVoicings; 0 = Modern
 
     bool autotuneOn = false;
@@ -1469,6 +1742,25 @@ private:
     bool deEsserOn = false;
     float deEsserPosition = 14.0f, deEsserFrequency = 6000.0f, deEsserThreshold = -30.0f, deEsserReduction = 12.0f;
     bool deEsserBypass = false;
+
+    bool eqOn = false;
+    float eqPosition = 15.0f;
+    float eqLowFreq = 100.0f, eqLowGain = 0.0f;
+    float eqMidFreq = 800.0f, eqMidGain = 0.0f;
+    float eqHighFreq = 3000.0f, eqHighGain = 0.0f;
+    bool eqBypass = false;
+
+    bool doublerOn = false;
+    float doublerPosition = 16.0f, doublerDelay = 20.0f, doublerDepth = 4.0f, doublerMix = 0.4f;
+    bool doublerBypass = false;
+
+    bool harmonizerOn = false;
+    float harmonizerPosition = 17.0f, harmonizerInterval = 7.0f, harmonizerMix = 0.4f;
+    bool harmonizerBypass = false;
+
+    bool exciterOn = false;
+    float exciterPosition = 18.0f, exciterFrequency = 6000.0f, exciterAmount = 0.3f;
+    bool exciterBypass = false;
 
     bool namOn = false;
     // Position 7 - right after Cabinet, before Chorus - see

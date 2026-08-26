@@ -90,6 +90,31 @@ public:
         c_a1 = (float)(a1/a0); c_a2 = (float)(a2/a0);
     }
 
+    // The filter's magnitude response in dB at a given frequency - not
+    // part of the real-time process() path, purely for UI visualization
+    // (e.g. drawing an EQ curve graph). Evaluates the normalized transfer
+    // function H(e^jw) = (b0 + b1*z^-1 + b2*z^-2) / (1 + a1*z^-1 + a2*z^-2)
+    // directly from the coefficients setParams() already computed, at
+    // z = e^jw, w = 2*pi*freq/sampleRate - the standard way to read a
+    // digital filter's frequency response off its coefficients (see the
+    // RBJ cookbook this class's coefficients already come from).
+    float magnitudeDB(float freq) const
+    {
+        const double w = 2.0 * M_PI * static_cast<double>(freq) / sampleRate;
+        const double cosw = std::cos(w), sinw = std::sin(w);
+        const double cos2w = std::cos(2.0 * w), sin2w = std::sin(2.0 * w);
+
+        const double numReal = c_b0 + c_b1 * cosw + c_b2 * cos2w;
+        const double numImag = -(c_b1 * sinw + c_b2 * sin2w);
+        const double denReal = 1.0 + c_a1 * cosw + c_a2 * cos2w;
+        const double denImag = -(c_a1 * sinw + c_a2 * sin2w);
+
+        const double numMag = std::sqrt(numReal * numReal + numImag * numImag);
+        const double denMag = std::sqrt(denReal * denReal + denImag * denImag);
+        const double mag = (denMag > 1e-12) ? numMag / denMag : 0.0;
+        return static_cast<float>(20.0 * std::log10(std::max(mag, 1e-9)));
+    }
+
     // Direct Form I - the classic biquad equation:
     // y[n] = b0*x[n] + b1*x[n-1] + b2*x[n-2] - a1*y[n-1] - a2*y[n-2]
     float process(float x)
