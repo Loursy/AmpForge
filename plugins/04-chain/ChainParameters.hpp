@@ -361,6 +361,15 @@ enum Parameters
     // - hosts are free to vary this from call to call, so it reflects
     // "what just happened", not a fixed setting AmpForge controls.
     kParamBufferSize,
+    // Sample Rate - the rate the host actually reported to the DSP, in Hz,
+    // reported back to the UI the same way Buffer Size above is. The UI has
+    // its own DPF-provided getSampleRate(), but hosts are not obliged to
+    // tell the *UI* anything about the rate (Ardour at 48 kHz left it at
+    // DPF's 44100 default, which the sidebar then displayed - see issue
+    // #1). The DSP always gets a real sampleRateChanged() call, so this
+    // mirrors what the audio path is genuinely running at, and the EQ
+    // curve is drawn from it too instead of from the UI's own guess.
+    kParamSampleRate,
 
     kParamCount
 };

@@ -870,6 +870,11 @@ protected:
             parameter.name = "Buffer Size"; parameter.symbol = "buffer_size"; parameter.unit = "smp";
             parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 16384.0f;
             break;
+        case kParamSampleRate:
+            parameter.hints |= kParameterIsOutput;
+            parameter.name = "Sample Rate"; parameter.symbol = "sample_rate"; parameter.unit = "Hz";
+            parameter.ranges.def = 0.0f; parameter.ranges.min = 0.0f; parameter.ranges.max = 384000.0f;
+            break;
 
         case kParamAmpType:
             parameter.hints |= kParameterIsInteger;
@@ -1074,6 +1079,7 @@ protected:
         case kParamTunerOn:           return tunerOn ? 1.0f : 0.0f;
         case kParamTunerFrequency:    return tunerFrequency;
         case kParamBufferSize:        return bufferSize;
+        case kParamSampleRate:        return sampleRateValue;
 
         case kParamAmpType:           return ampType;
 
@@ -1388,6 +1394,11 @@ protected:
 
     void sampleRateChanged(double newSampleRate) override
     {
+        // Published to the UI through kParamSampleRate (see its comment in
+        // ChainParameters.hpp) - the UI's own getSampleRate() isn't
+        // guaranteed to be told anything by the host.
+        sampleRateValue = static_cast<float>(newSampleRate);
+
         updateInputLevelDecay(newSampleRate);
         gateBlock.setSampleRate(newSampleRate);
         compBlock.setSampleRate(newSampleRate);
@@ -1699,6 +1710,9 @@ private:
 
     // Buffer Size meter - see kParamBufferSize's comment in ChainParameters.hpp.
     float bufferSize = 0.0f;
+
+    // Sample Rate meter - see kParamSampleRate's comment in ChainParameters.hpp.
+    float sampleRateValue = 0.0f;
 
     // Tuner - see kParamTunerOn's comment in ChainParameters.hpp.
     bool tunerOn = false;

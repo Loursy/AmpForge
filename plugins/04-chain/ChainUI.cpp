@@ -3244,7 +3244,7 @@ private:
 
         char buf[32];
 
-        std::snprintf(buf, sizeof(buf), "%.0f Hz", getSampleRate());
+        std::snprintf(buf, sizeof(buf), "%.0f Hz", audioSampleRate());
         drawSidebarRow(labelX, valueX, rowY, "Sample Rate", buf);
         rowY += 24.0f;
 
@@ -3320,6 +3320,22 @@ private:
             const std::string fittedArch = truncateToFit(namArchitecture, valueX - (labelX + 13.0f));
             text(labelX + 13.0f, rowY, fittedArch.c_str(), nullptr);
         }
+    }
+
+    // The sample rate the DSP is actually running at, as published through
+    // kParamSampleRate (see its comment in ChainParameters.hpp). Falls back
+    // to the UI's own getSampleRate() during the window between the UI being
+    // constructed and the first parameter push reaching it, and to 44100 if
+    // even that is unset - a 0 reaching Biquad::setParams() would divide by
+    // zero.
+    float audioSampleRate() const
+    {
+        const float published = displayValues[kParamSampleRate];
+        if (published > 0.0f)
+            return published;
+
+        const float hostRate = getSampleRate();
+        return hostRate > 0.0f ? hostRate : 44100.0f;
     }
 
     // One "label ......... value" row for drawStatusSidebar() above.
@@ -4288,7 +4304,9 @@ private:
         ampforge::Biquad bands[3];
         for (int i = 0; i < 3; ++i)
         {
-            bands[i].setSampleRate(getSampleRate());
+            // The DSP's real sample rate, not the UI's own getSampleRate() -
+            // see kParamSampleRate's comment in ChainParameters.hpp.
+            bands[i].setSampleRate(audioSampleRate());
             bands[i].setParams(kEqBands[i].type, paramValues[kEqBands[i].freqParam],
                                 paramValues[kEqBands[i].gainParam], kEqBands[i].q);
         }
