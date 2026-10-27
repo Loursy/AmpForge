@@ -128,3 +128,14 @@ add_subdirectory(plugins/01-gain)
 add_subdirectory(plugins/02-amp)
 add_subdirectory(plugins/03-screamer)
 add_subdirectory(plugins/04-chain)
+
+# --- Unit tests for core/ (on by default, `ctest` to run) ---
+# These only cover the header-only DSP, so they add one small executable
+# and a couple of seconds to a full build - worth it by default, since a
+# build with no tests is exactly how a NaN-producing block reaches a
+# release. Configure with -DAMPFORGE_BUILD_TESTS=OFF to skip them.
+option(AMPFORGE_BUILD_TESTS "Build the core/ DSP unit tests" ON)
+if(AMPFORGE_BUILD_TESTS)
+  enable_testing()
+  add_subdirectory(tests)
+endif()

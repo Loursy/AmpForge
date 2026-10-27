@@ -67,6 +67,14 @@ jobs:
         # LV2 metadata, and this runner has no real one.
         run: xvfb-run -a installer/windows/build.sh
 
+      - name: Run the DSP unit tests
+        # The test .exe is a Windows binary cross-compiled on this Linux
+        # runner, so CTest runs it through the wine emulator the toolchain
+        # file already sets as CMAKE_CROSSCOMPILING_EMULATOR (the same wine
+        # the LV2 metadata step above needs) - no display needed here, so
+        # it's outside the xvfb-run above.
+        run: ctest --test-dir build-windows --output-on-failure
+
       - uses: actions/upload-artifact@v4
         with:
           name: ampforge-windows-setup

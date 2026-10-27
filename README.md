@@ -343,6 +343,25 @@ A self-built copy runs into the same unsigned-build Gatekeeper prompt
 mentioned in [Download](#download) above - clear it the same way:
 `xattr -dr com.apple.quarantine <path>`.
 
+### 4. Run the tests
+
+The DSP in `core/` has a small, dependency-free test suite - plain CTest,
+no GoogleTest or Catch2 to fetch:
+
+```bash
+cd build
+ctest --output-on-failure
+```
+
+Tests are built by default; configure with `-DAMPFORGE_BUILD_TESTS=OFF`
+to skip them. They cover the EQ/filter coefficient math against a
+measured frequency response, the effect chain's ordering and
+reset-on-re-enable behaviour, delay timing, gate and compressor
+behaviour, the pitch detector, and a sweep that runs every block - then
+all of them chained together - through real audio to catch NaN/Inf and
+runaway gain. CI runs them on all three platforms (on Windows under
+Wine, since those binaries are cross-compiled).
+
 ## Using it
 
 - **In Reaper**: add it from the FX browser like any other VST3 or CLAP

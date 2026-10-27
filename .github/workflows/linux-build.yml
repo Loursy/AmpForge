@@ -30,6 +30,33 @@ permissions:
   contents: write # needed for the release-publish step below to run `gh release create`
 
 jobs:
+  # Runs the core/ DSP unit tests on a plain native toolchain, separate from
+  # the Docker release build below: it's seconds instead of minutes, and it
+  # doesn't need the glibc baseline the shipped binaries do. Kept in this
+  # workflow (rather than a fourth one) so a red test shows up on the same
+  # PR check as the Linux build itself.
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install CMake, Ninja, and a C++ compiler
+        # Same prerequisite list README's "Install prerequisites" gives for a
+        # native build - the test target itself doesn't need X11/OpenGL, but
+        # configuring the plugin targets that share this CMakeLists does.
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build g++ \
+            libx11-dev libxext-dev libxcursor-dev libxrandr-dev libgl1-mesa-dev
+
+      - name: Configure
+        run: cmake -S . -B build-tests -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build and run the DSP unit tests
+        run: |
+          cmake --build build-tests --target ampforge_tests
+          ctest --test-dir build-tests --output-on-failure
+
   build:
     runs-on: ubuntu-latest
     steps:
