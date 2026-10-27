@@ -116,6 +116,21 @@ static constexpr float kAnimSnapEpsilon  = 0.001f;
 static constexpr float kDropdownRowH     = 28.0f;
 static constexpr float kDragThreshold    = 6.0f;
 
+// Double-clicking a knob opens the same exact-value editor a click on its
+// value chip does (see startKnobEdit()) - issue #4. Measured with
+// steady_clock rather than the MouseEvent's own time field, which some
+// hosts never fill in. Generous enough for a normal double-click, short
+// enough that two deliberate adjustments don't get mistaken for one.
+static constexpr double kKnobDoubleClickMs = 400.0;
+// How far the pointer may travel between the two clicks and still count
+// as a double-click rather than a click-drag followed by another click.
+static constexpr float kKnobDoubleClickSlop = 5.0f;
+
+// How far either side of the 4px-wide scrollbar a press still grabs it -
+// a 4px target is far too small to hit comfortably with a mouse.
+static constexpr float kScrollbarGrabSlopX = 6.0f;
+static constexpr float kScrollbarW          = 4.0f;
+
 // The reorderable pedal rack starts right at the top - the Input trim
 // isn't one of the pedals (see kInputPedalIndex below), so it doesn't get
 // a slot in that column at all anymore; it lives in the fixed right-hand
@@ -679,6 +694,31 @@ protected:
 
         if (editingKnobPedal >= 0)
         {
+            // Some hosts deliver Enter/Backspace/Escape only as text
+            // events, never as key events - handle them here as well as in
+            // onKeyboard() below, so confirming a typed value works
+            // regardless of which of the two the host actually sends
+            // (issue #4: "there was a text box, but confirming doesn't
+            // work"). If both arrive, the key event runs first and closes
+            // the editor, so the text event simply falls through.
+            if (ev.character == '\r' || ev.character == '\n')
+            {
+                confirmKnobEdit();
+                return true;
+            }
+            if (ev.character == '\b' || ev.character == 0x7f)
+            {
+                if (!knobEditBuffer.empty())
+                    knobEditBuffer.pop_back();
+                repaint();
+                return true;
+            }
+            if (ev.character == 0x1b)
+            {
+                cancelKnobEdit();
+                return true;
+            }
+
             const char c = ev.string[0];
             const bool isDigit = (c >= '0' && c <= '9');
             const bool isDot = (c == '.' && knobEditBuffer.find('.') == std::string::npos);
@@ -781,6 +821,11 @@ protected:
         {
             if (!ev.press)
             {
+                if (draggingScrollbar != 0)
+                {
+                    draggingScrollbar = 0;
+                    repaint();
+                }
                 if (draggingModuleIndex >= 0)
                 {
                     editParameter(kPedalDefs[draggingModuleIndex].positionParam, false);
@@ -826,6 +871,12 @@ protected:
             return handleControlBarClick(mx, my);
         }
 
+        // --- Scrollbars (issue #3) ---
+        // Must come before the palette's own row hit-test below: the
+        // palette bar sits inside the palette column, on top of a row.
+        if (handleScrollbarPress(mx, my))
+            return true;
+
         // --- Palette: press-and-hold starts a potential drag ---
         if (mx < kPaletteWidth && my > kTopBarHeight + kControlBarHeight)
         {
@@ -866,6 +917,11 @@ protected:
                 const float dy = my - knobCenterY;
                 if (dx * dx + dy * dy <= kKnobRadius * kKnobRadius)
                 {
+                    // A double-click types an exact value instead (issue
+                    // #4) - see knobDoubleClicked().
+                    if (knobDoubleClicked(kInputPedalIndex, 0))
+                        return true;
+
                     draggingKnobPedal = kInputPedalIndex;
                     draggingKnobIndex = 0;
                     draggingKnobStartY = my;
@@ -964,6 +1020,11 @@ protected:
                         const float dy = my - knobCenterY;
                         if (dx * dx + dy * dy <= kKnobRadius * kKnobRadius)
                         {
+                            // A double-click types an exact value instead
+                            // (issue #4) - see knobDoubleClicked().
+                            if (knobDoubleClicked(pedalIndex, static_cast<int>(k)))
+                                return true;
+
                             draggingKnobPedal = pedalIndex;
                             draggingKnobIndex = static_cast<int>(k);
                             draggingKnobStartY = my;
@@ -1020,10 +1081,22 @@ protected:
             return true;
         }
 
+        if (draggingScrollbar != 0)
+        {
+            applyScrollbarDrag(my);
+            return true;
+        }
+
         if (draggingKnobPedal >= 0)
         {
             const KnobDef& knob = resolveKnob(draggingKnobPedal, draggingKnobIndex);
             const float deltaPixels = draggingKnobStartY - my;
+
+            // Once the pointer has really moved this is a drag, not the
+            // first half of a double-click - see knobDoubleClicked().
+            if (std::fabs(deltaPixels) > kKnobDoubleClickSlop)
+                knobDragMoved = true;
+
             const float range = knob.maxVal - knob.minVal;
             float newValue = draggingKnobStartValue + (deltaPixels / kKnobDragSensitivity) * range;
             newValue = std::max(knob.minVal, std::min(knob.maxVal, newValue));
@@ -2137,6 +2210,91 @@ private:
         repaint();
     }
 
+    // Shared by every knob hit-test: a second click on the same knob within
+    // kKnobDoubleClickMs opens its exact-value editor instead of starting
+    // another drag (issue #4) - the same editor a click on the value chip
+    // below the knob opens. Returns true when the editor was opened, so the
+    // caller knows not to start a drag on this press too.
+    bool knobDoubleClicked(int pedalIndex, int knobIndex)
+    {
+        const auto now = std::chrono::steady_clock::now();
+        const bool doubleClick =
+            lastKnobClickPedal == pedalIndex &&
+            lastKnobClickIndex == knobIndex &&
+            !knobDragMoved &&
+            std::chrono::duration<double, std::milli>(now - lastKnobClickTime).count() <= kKnobDoubleClickMs;
+
+        if (doubleClick)
+        {
+            lastKnobClickPedal = -1;
+            lastKnobClickIndex = -1;
+            startKnobEdit(pedalIndex, knobIndex);
+            return true;
+        }
+
+        lastKnobClickPedal = pedalIndex;
+        lastKnobClickIndex = knobIndex;
+        lastKnobClickTime = now;
+        knobDragMoved = false;
+        return false;
+    }
+
+    // Starts a scrollbar drag if (mx, my) is on one of the two, returning
+    // true when the press was consumed. 1 = the rack's bar, 2 = the
+    // palette's (see draggingScrollbar).
+    bool handleScrollbarPress(float mx, float my)
+    {
+        for (int which = 1; which <= 2; ++which)
+        {
+            const ScrollbarGeom g = (which == 1) ? rackScrollbarGeom() : paletteScrollbarGeom();
+            if (!g.visible)
+                continue;
+            if (mx < g.x - kScrollbarGrabSlopX || mx > g.x + kScrollbarW + kScrollbarGrabSlopX)
+                continue;
+            if (my < g.trackY || my > g.trackY + g.trackH)
+                continue;
+
+            // Pressing the thumb grabs it where it was pressed; pressing
+            // the empty track first jumps the thumb there (centred on the
+            // cursor) and then keeps dragging it - so one click both pages
+            // and grabs, which is what every other scrollbar does.
+            scrollbarDragGrabOffset = (my >= g.thumbY && my <= g.thumbY + g.thumbH)
+                                          ? my - g.thumbY
+                                          : g.thumbH * 0.5f;
+            draggingScrollbar = which;
+            applyScrollbarDrag(my);
+            return true;
+        }
+
+        return false;
+    }
+
+    void applyScrollbarDrag(float my)
+    {
+        if (draggingScrollbar == 0)
+            return;
+
+        const ScrollbarGeom g = (draggingScrollbar == 1) ? rackScrollbarGeom() : paletteScrollbarGeom();
+        if (!g.visible)
+        {
+            draggingScrollbar = 0;
+            return;
+        }
+
+        // Only trackY/trackH/thumbH/maxScroll are used here, none of which
+        // depend on the current offset - so re-deriving the geometry from
+        // the offset this very call is about to change is safe.
+        const float travel = std::max(1.0f, g.trackH - g.thumbH);
+        const float thumbY = std::max(g.trackY, std::min(g.trackY + travel, my - scrollbarDragGrabOffset));
+        const float offset = -((thumbY - g.trackY) / travel) * g.maxScroll;
+
+        if (draggingScrollbar == 1)
+            scrollOffset = offset;
+        else
+            paletteScrollOffset = offset;
+        repaint();
+    }
+
     // ---------------- Pedal chain logic ----------------
 
     void togglePedalPresence(int pedalIndex)
@@ -2339,6 +2497,59 @@ private:
             return 0.0f;
         const PaletteRow& last = kPaletteRows.back();
         return (last.y + last.height) - kRackTop;
+    }
+
+    // Geometry of one of the two scrollbars (the rack's and the palette
+    // list's). Kept in one place so the drawing code and the drag
+    // hit-test in onMouse()/onMotion() can't drift apart - issue #3 was
+    // exactly that: the bars were drawn, but nothing handled clicks on
+    // them, so they were pure decoration on a window short enough to need
+    // them.
+    struct ScrollbarGeom
+    {
+        bool  visible   = false;
+        float x         = 0.0f;
+        float trackY    = 0.0f;
+        float trackH    = 0.0f;
+        float thumbY    = 0.0f;
+        float thumbH    = 0.0f;
+        float maxScroll = 0.0f; // content height minus visible height, in px
+    };
+
+    static ScrollbarGeom makeScrollbarGeom(float x, float trackY, float visibleH,
+                                           float contentH, float offset, float minThumbH)
+    {
+        ScrollbarGeom g;
+        if (visibleH <= 0.0f || contentH <= visibleH)
+            return g;
+
+        g.visible   = true;
+        g.x         = x;
+        g.trackY    = trackY;
+        g.trackH    = visibleH - 10.0f;
+        g.thumbH    = std::max(minThumbH, g.trackH * (visibleH / contentH));
+        g.maxScroll = contentH - visibleH;
+
+        const float frac = std::max(0.0f, std::min(1.0f, (-offset) / std::max(1.0f, g.maxScroll)));
+        g.thumbY = g.trackY + frac * (g.trackH - g.thumbH);
+        return g;
+    }
+
+    ScrollbarGeom rackScrollbarGeom() const
+    {
+        // Hugs the rack's own right edge (within the gap before the status
+        // sidebar), not the window edge - see drawRack()'s comment.
+        const float moduleW = rackModuleWidth(getWidth());
+        return makeScrollbarGeom(kModuleLeft + moduleW + 6.0f, kPedalRackTop + 5.0f,
+                                 static_cast<float>(getHeight()) - kPedalRackTop,
+                                 totalContentHeight(), scrollOffset, 30.0f);
+    }
+
+    ScrollbarGeom paletteScrollbarGeom() const
+    {
+        return makeScrollbarGeom(kPaletteWidth - 8.0f, kRackTop + 5.0f,
+                                 static_cast<float>(getHeight()) - kRackTop - kPaletteFooterH,
+                                 paletteContentHeight(), paletteScrollOffset, 24.0f);
     }
 
     // ---------------- Tuner ----------------
@@ -3027,25 +3238,20 @@ private:
         restore();
 
         // Scrollbar - same look/placement logic as the rack's own (see
-        // drawRack()), just along the palette's right edge instead.
-        const float paletteContentH = paletteContentHeight();
-        const float paletteVisibleH = paletteVisibleBottom - kRackTop;
-        if (paletteContentH > paletteVisibleH)
+        // drawRack()), just along the palette's right edge instead. The
+        // geometry comes from paletteScrollbarGeom() so the drag
+        // hit-test in onMouse() uses the exact same numbers.
+        const ScrollbarGeom paletteBar = paletteScrollbarGeom();
+        if (paletteBar.visible)
         {
-            const float trackH = paletteVisibleH - 10.0f;
-            const float thumbH = std::max(24.0f, trackH * (paletteVisibleH / paletteContentH));
-            const float scrollFrac = (-paletteScrollOffset) / std::max(1.0f, paletteContentH - paletteVisibleH);
-            const float thumbY = kRackTop + 5.0f + scrollFrac * (trackH - thumbH);
-            const float scrollbarX = kPaletteWidth - 8.0f;
-
             beginPath();
-            roundedRect(scrollbarX, kRackTop + 5.0f, 4.0f, trackH, 2.0f);
+            roundedRect(paletteBar.x, paletteBar.trackY, kScrollbarW, paletteBar.trackH, 2.0f);
             fillColor(Color(255, 255, 255, 0.04f));
             fill();
             closePath();
 
             beginPath();
-            roundedRect(scrollbarX, thumbY, 4.0f, thumbH, 2.0f);
+            roundedRect(paletteBar.x, paletteBar.thumbY, kScrollbarW, paletteBar.thumbH, 2.0f);
             fillColor(kColorScrollbar);
             fill();
             closePath();
@@ -3142,28 +3348,19 @@ private:
         if (draggingModuleIndex >= 0)
             drawModuleCard(draggingModuleIndex, dragModuleCurrentY, moduleW);
 
-        const float contentHeight = totalContentHeight();
-        const float visibleHeight = height - kPedalRackTop;
-        if (contentHeight > visibleHeight)
+        // The rack's own scrollbar - geometry shared with the drag
+        // hit-test in onMouse(), see rackScrollbarGeom().
+        const ScrollbarGeom rackBar = rackScrollbarGeom();
+        if (rackBar.visible)
         {
-            const float trackH = visibleHeight - 10.0f;
-            const float thumbH = std::max(30.0f, trackH * (visibleHeight / contentHeight));
-            const float scrollFrac = (-scrollOffset) / std::max(1.0f, contentHeight - visibleHeight);
-            const float thumbY = kPedalRackTop + 5.0f + scrollFrac * (trackH - thumbH);
-
-            // Hugs the rack's own right edge (within the gap before the
-            // status sidebar), not the window edge - the rack no longer
-            // spans the full window width now that the sidebar sits there.
-            const float scrollbarX = kModuleLeft + moduleW + 6.0f;
-
             beginPath();
-            roundedRect(scrollbarX, kPedalRackTop + 5.0f, 4.0f, trackH, 2.0f);
+            roundedRect(rackBar.x, rackBar.trackY, kScrollbarW, rackBar.trackH, 2.0f);
             fillColor(Color(255, 255, 255, 0.04f));
             fill();
             closePath();
 
             beginPath();
-            roundedRect(scrollbarX, thumbY, 4.0f, thumbH, 2.0f);
+            roundedRect(rackBar.x, rackBar.thumbY, kScrollbarW, rackBar.thumbH, 2.0f);
             fillColor(kColorScrollbar);
             fill();
             closePath();
@@ -4836,6 +5033,21 @@ private:
     int editingKnobPedal = -1;
     int editingKnobIndex = -1;
     std::string knobEditBuffer;
+
+    // Double-click-to-type state for the knob last pressed - see
+    // knobDoubleClicked(). steady_clock rather than the MouseEvent's own
+    // time field, which some hosts leave at 0.
+    int lastKnobClickPedal = -1;
+    int lastKnobClickIndex = -1;
+    std::chrono::steady_clock::time_point lastKnobClickTime{};
+    bool knobDragMoved = false;
+
+    // Which scrollbar is being dragged, if any: 0 = none, 1 = the rack's,
+    // 2 = the palette list's. scrollbarDragGrabOffset is how far down the
+    // thumb the press landed, so the thumb doesn't jump under the cursor
+    // when the drag starts.
+    int draggingScrollbar = 0;
+    float scrollbarDragGrabOffset = 0.0f;
 
     int paletteDraggingPedal = -1;
     bool paletteDragMoved = false;
