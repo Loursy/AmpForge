@@ -15,12 +15,12 @@ set -euo pipefail
 # installer/linux/package.sh's and installer/windows/ampforge.nsi's own
 # VERSION/PRODUCT_VERSION by hand - there's no CMake project version yet)
 # but can be overridden, the same way BUILD_DIR above can:
-#   VERSION=0.4.0 installer/macos/package.sh
+#   VERSION=0.5.0 installer/macos/package.sh
 # CI (.github/workflows/macos-build.yml) does exactly this on a tag push,
 # deriving VERSION from the git tag itself - so a *released* zip's version
 # always matches its tag with no hand-editing here required, and this
 # hardcoded fallback only actually matters for an untagged local/CI build.
-VERSION="${VERSION:-0.4.0}"
+VERSION="${VERSION:-0.5.0}"
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 BUILD_DIR="$REPO_ROOT/${BUILD_DIR:-build-macos}"
