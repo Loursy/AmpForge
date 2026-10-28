@@ -708,6 +708,9 @@ protected:
             }
             if (ev.character == '\b' || ev.character == 0x7f)
             {
+                // Backspace edits the pre-filled value instead of being
+                // swallowed, so the field stops being "fresh".
+                knobEditFresh = false;
                 if (!knobEditBuffer.empty())
                     knobEditBuffer.pop_back();
                 repaint();
@@ -721,10 +724,21 @@ protected:
 
             const char c = ev.string[0];
             const bool isDigit = (c >= '0' && c <= '9');
-            const bool isDot = (c == '.' && knobEditBuffer.find('.') == std::string::npos);
-            const bool isMinus = (c == '-' && knobEditBuffer.empty());
-            if ((isDigit || isDot || isMinus) && knobEditBuffer.size() < 12)
+            // While the field is fresh it is conceptually "selected", so the
+            // checks look at what the buffer will hold after the replacement.
+            const bool isDot = (c == '.') && (knobEditFresh || knobEditBuffer.find('.') == std::string::npos);
+            const bool isMinus = (c == '-') && (knobEditFresh || knobEditBuffer.empty());
+            if ((isDigit || isDot || isMinus) && (knobEditFresh || knobEditBuffer.size() < 12))
+            {
+                // First keystroke replaces the value the editor opened
+                // with, so typing "2.5" over a shown "1.0" yields 2.5.
+                if (knobEditFresh)
+                {
+                    knobEditBuffer.clear();
+                    knobEditFresh = false;
+                }
                 knobEditBuffer += c;
+            }
             repaint();
             return true;
         }
@@ -772,6 +786,7 @@ protected:
 
             if (ev.key == kKeyBackspace)
             {
+                knobEditFresh = false;
                 if (!knobEditBuffer.empty())
                     knobEditBuffer.pop_back();
                 repaint();
@@ -2173,6 +2188,7 @@ private:
         char buf[32];
         std::snprintf(buf, sizeof(buf), "%.*f", knob.asPercent ? 0 : knob.decimals, shown);
         knobEditBuffer = buf;
+        knobEditFresh = true;
         repaint();
     }
 
@@ -2199,6 +2215,7 @@ private:
         editingKnobPedal = -1;
         editingKnobIndex = -1;
         knobEditBuffer.clear();
+        knobEditFresh = false;
         repaint();
     }
 
@@ -2207,6 +2224,7 @@ private:
         editingKnobPedal = -1;
         editingKnobIndex = -1;
         knobEditBuffer.clear();
+        knobEditFresh = false;
         repaint();
     }
 
@@ -5033,6 +5051,13 @@ private:
     int editingKnobPedal = -1;
     int editingKnobIndex = -1;
     std::string knobEditBuffer;
+    // True until the first keystroke of an edit: the buffer starts out
+    // holding the knob's current value, and the first typed character is
+    // meant to replace it rather than append to it - double-clicking a knob
+    // and typing "2.5" should give 2.5, not "1.02.5" clamped back to 1.0.
+    // That is the "field is selected" convention every DAW's own value
+    // editor uses.
+    bool knobEditFresh = false;
 
     // Double-click-to-type state for the knob last pressed - see
     // knobDoubleClicked(). steady_clock rather than the MouseEvent's own
